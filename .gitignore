@@ -1,0 +1,12 @@
+# Libraries
+node_modules/
+
+# Compiler files
+forge-out/
+cache/
+
+# Dotenv file
+.env
+
+# Log files
+*.log
