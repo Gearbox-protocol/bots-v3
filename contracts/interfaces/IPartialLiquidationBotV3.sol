@@ -33,16 +33,14 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param creditManager Credit manager an account was liquidated in
     /// @param creditAccount Liquidated credit account
     /// @param token Collateral token seized from `creditAccount`
-    /// @param repaidAmount Amount of `creditManager`'s underlying repaid
-    /// @param feeAmount Amount of `creditManager`'s underlying sent to treasury
-    /// @param seizedAmount Amount of `token` seized from `creditAccount`
+    /// @param repaidDebt Amount of `creditAccount`'s debt repaid
+    /// @param seizedCollateral Amount of `token` seized from `creditAccount`
     event Liquidate(
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
-        uint256 repaidAmount,
-        uint256 feeAmount,
-        uint256 seizedAmount
+        uint256 repaidDebt,
+        uint256 seizedCollateral
     );
 
     // ------ //
@@ -76,6 +74,7 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @return seizedAmount Amount of `token` seized
     /// @dev Reverts if `creditManager` is not an allowed credit manager
     /// @dev Reverts if `token` is `creditManager`'s underlying
+    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
     function liquidateExactDebt(
@@ -99,6 +98,7 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @return repaidAmount Amount of `creditManager`'s underlying repaid
     /// @dev Reverts if `creditManager` is not an allowed credit manager
     /// @dev Reverts if `token` is `creditManager`'s underlying
+    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
     /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
     function liquidateExactCollateral(
