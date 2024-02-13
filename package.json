@@ -15,12 +15,28 @@
     "type": "git",
     "url": "https://github.com/Gearbox-protocol/bots-v3"
   },
+  "scripts": {
+    "prepare": "husky || true"
+  },
+  "dependencies": {},
   "devDependencies": {
     "@1inch/solidity-utils": "2.4.0",
+    "@commitlint/cli": "18.6.0",
+    "@commitlint/config-conventional": "18.6.0",
     "@gearbox-protocol/core-v2": "^1.19.0-base.17",
     "@gearbox-protocol/core-v3": "^1.47.1",
     "@gearbox-protocol/sdk-gov": "^1.29.0",
     "@openzeppelin/contracts": "4.9.3",
-    "forge-std": "foundry-rs/forge-std"
+    "forge-std": "foundry-rs/forge-std",
+    "husky": "^9.0.10",
+    "lint-staged": "^15.2.2"
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  },
+  "lint-staged": {
+    "*.sol": "forge fmt"
   }
 }
