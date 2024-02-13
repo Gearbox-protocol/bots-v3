@@ -1,0 +1,49 @@
+name: Forge
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+
+env:
+  HUSKY: 0
+  CI: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: "yarn"
+          node-version-file: ".nvmrc"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check formatting
+        run: forge fmt --check
+        id: fmt
+
+      - name: Compile contracts
+        run: forge build --sizes
+        id: build
+
+      - name: Run tests
+        run: forge test -vvv
+        id: test

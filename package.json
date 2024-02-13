@@ -27,6 +27,7 @@
     "@gearbox-protocol/core-v3": "^1.47.1",
     "@gearbox-protocol/sdk-gov": "^1.29.0",
     "@openzeppelin/contracts": "4.9.3",
+    "ds-test": "dapphub/ds-test",
     "forge-std": "foundry-rs/forge-std",
     "husky": "^9.0.10",
     "lint-staged": "^15.2.2"
