@@ -49,9 +49,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         address underlying;
         uint256 feeRate;
         uint256 discountRate;
-        uint256 repaidAmount;
-        uint256 seizedAmount;
-        uint256 feeAmount;
     }
 
     /// @inheritdoc IVersion
@@ -86,16 +83,14 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         uint256 minSeizedAmount,
         address to,
         PriceUpdate[] calldata priceUpdates
-    ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256) {
+    ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256 seizedAmount) {
         LiquidationState memory state = _initState(creditManager);
         _checkLiquidation(state, creditAccount, token, priceUpdates);
 
-        state.repaidAmount = repaidAmount;
-        (state.seizedAmount, state.feeAmount) = _getAmountsExactDebt(state, token);
-        if (state.seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
+        seizedAmount = _getSeizedAmount(state, token, repaidAmount);
+        if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
 
-        _executeLiquidation(state, creditAccount, token, to);
-        return state.seizedAmount;
+        _executeLiquidation(state, creditAccount, token, repaidAmount, seizedAmount, to);
     }
 
     /// @inheritdoc IPartialLiquidationBotV3
@@ -107,16 +102,14 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         uint256 maxRepaidAmount,
         address to,
         PriceUpdate[] calldata priceUpdates
-    ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256) {
+    ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256 repaidAmount) {
         LiquidationState memory state = _initState(creditManager);
         _checkLiquidation(state, creditAccount, token, priceUpdates);
 
-        state.seizedAmount = seizedAmount;
-        (state.repaidAmount, state.feeAmount) = _getAmountsExactCollateral(state, token);
-        if (state.repaidAmount > maxRepaidAmount) revert RepaidMoreThanAllowedException();
+        repaidAmount = _getRepaidAmount(state, token, seizedAmount);
+        if (repaidAmount > maxRepaidAmount) revert RepaidMoreThanAllowedException();
 
-        _executeLiquidation(state, creditAccount, token, to);
-        return state.repaidAmount;
+        _executeLiquidation(state, creditAccount, token, repaidAmount, seizedAmount, to);
     }
 
     // ------------- //
@@ -183,49 +176,50 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         }
     }
 
-    function _getAmountsExactDebt(LiquidationState memory state, address token)
+    function _getSeizedAmount(LiquidationState memory state, address token, uint256 repaidAmount)
         internal
         view
-        returns (uint256 seizedAmount, uint256 feeAmount)
+        returns (uint256)
     {
-        feeAmount = state.repaidAmount * state.feeRate / PERCENTAGE_FACTOR;
-        uint256 repaidDebt = state.repaidAmount - feeAmount;
-        seizedAmount = IPriceOracleV3(state.priceOracle).convert(repaidDebt, state.underlying, token)
-            * PERCENTAGE_FACTOR / state.discountRate;
+        return IPriceOracleV3(state.priceOracle).convert(repaidAmount, state.underlying, token) * PERCENTAGE_FACTOR
+            / state.discountRate;
     }
 
-    function _getAmountsExactCollateral(LiquidationState memory state, address token)
+    function _getRepaidAmount(LiquidationState memory state, address token, uint256 seizedAmount)
         internal
         view
-        returns (uint256 repaidAmount, uint256 feeAmount)
+        returns (uint256)
     {
-        uint256 repaidDebt = IPriceOracleV3(state.priceOracle).convert(state.seizedAmount, token, state.underlying)
-            * state.discountRate / PERCENTAGE_FACTOR;
-        feeAmount = repaidAmount * state.feeRate / (PERCENTAGE_FACTOR - state.feeRate);
-        repaidAmount = repaidDebt + feeAmount;
+        return IPriceOracleV3(state.priceOracle).convert(seizedAmount, token, state.underlying) * state.discountRate
+            / PERCENTAGE_FACTOR;
     }
 
-    function _executeLiquidation(LiquidationState memory state, address creditAccount, address token, address to)
-        internal
-    {
-        IERC20(state.underlying).transferFrom(msg.sender, address(this), state.repaidAmount);
-        uint256 repaidDebt = state.repaidAmount - state.feeAmount;
+    function _executeLiquidation(
+        LiquidationState memory state,
+        address creditAccount,
+        address token,
+        uint256 repaidAmount,
+        uint256 seizedAmount,
+        address to
+    ) internal {
+        IERC20(state.underlying).transferFrom(msg.sender, address(this), repaidAmount);
+        repaidAmount -= repaidAmount * state.feeRate / PERCENTAGE_FACTOR;
 
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
             target: state.creditFacade,
-            callData: abi.encodeCall(ICreditFacadeV3Multicall.addCollateral, (state.underlying, repaidDebt))
+            callData: abi.encodeCall(ICreditFacadeV3Multicall.addCollateral, (state.underlying, repaidAmount))
         });
         calls[1] = MultiCall({
             target: state.creditFacade,
-            callData: abi.encodeCall(ICreditFacadeV3Multicall.decreaseDebt, (repaidDebt))
+            callData: abi.encodeCall(ICreditFacadeV3Multicall.decreaseDebt, (repaidAmount))
         });
         calls[2] = MultiCall({
             target: state.creditFacade,
-            callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (token, state.seizedAmount, to))
+            callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (token, seizedAmount, to))
         });
         ICreditFacadeV3(state.creditFacade).botMulticall(creditAccount, calls);
 
-        emit Liquidate(state.creditManager, creditAccount, token, repaidDebt, state.seizedAmount);
+        emit Liquidate(state.creditManager, creditAccount, token, repaidAmount, seizedAmount);
     }
 }
