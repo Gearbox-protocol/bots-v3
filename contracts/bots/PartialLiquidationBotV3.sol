@@ -8,9 +8,9 @@ import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v2/contracts/libraries/Constants.sol";
 import {MultiCall} from "@gearbox-protocol/core-v2/contracts/libraries/MultiCall.sol";
 
-import {ICreditManagerV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
 import {ICreditFacadeV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
 import {ICreditFacadeV3Multicall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
+import {ICreditManagerV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
 import {
     CreditAccountNotLiquidatableException,
     PriceFeedDoesNotExistException
@@ -19,8 +19,8 @@ import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPr
 import {ACLNonReentrantTrait} from "@gearbox-protocol/core-v3/contracts/traits/ACLNonReentrantTrait.sol";
 import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
 
@@ -41,8 +41,8 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTrait, ContractsRegisterTrait {
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    /// @dev Internal liquidation state
-    struct LiquidationState {
+    /// @dev Internal liquidation variables
+    struct LiquidationVars {
         address creditManager;
         address creditFacade;
         address priceOracle;
@@ -84,13 +84,14 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         address to,
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256 seizedAmount) {
-        LiquidationState memory state = _initState(creditManager);
-        _checkLiquidation(state, creditAccount, token, priceUpdates);
+        LiquidationVars memory vars = _initVars(creditManager);
+        _checkLiquidation(vars, creditAccount, token, priceUpdates);
 
-        seizedAmount = _getSeizedAmount(state, token, repaidAmount);
+        seizedAmount = IPriceOracleV3(vars.priceOracle).convert(repaidAmount, vars.underlying, token)
+            * PERCENTAGE_FACTOR / vars.discountRate;
         if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
 
-        _executeLiquidation(state, creditAccount, token, repaidAmount, seizedAmount, to);
+        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
     }
 
     /// @inheritdoc IPartialLiquidationBotV3
@@ -103,13 +104,14 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         address to,
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant allowedCreditManagersOnly(creditManager) returns (uint256 repaidAmount) {
-        LiquidationState memory state = _initState(creditManager);
-        _checkLiquidation(state, creditAccount, token, priceUpdates);
+        LiquidationVars memory vars = _initVars(creditManager);
+        _checkLiquidation(vars, creditAccount, token, priceUpdates);
 
-        repaidAmount = _getRepaidAmount(state, token, seizedAmount);
+        repaidAmount = IPriceOracleV3(vars.priceOracle).convert(seizedAmount, token, vars.underlying)
+            * vars.discountRate / PERCENTAGE_FACTOR;
         if (repaidAmount > maxRepaidAmount) revert RepaidMoreThanAllowedException();
 
-        _executeLiquidation(state, creditAccount, token, repaidAmount, seizedAmount, to);
+        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
     }
 
     // ------------- //
@@ -146,80 +148,69 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
     // INTERNALS //
     // --------- //
 
-    function _initState(address creditManager) internal view returns (LiquidationState memory state) {
-        state.creditManager = creditManager;
-        state.creditFacade = ICreditManagerV3(creditManager).creditFacade();
-        state.priceOracle = ICreditManagerV3(creditManager).priceOracle();
-        state.underlying = ICreditManagerV3(creditManager).underlying();
-        (, state.feeRate, state.discountRate,,) = ICreditManagerV3(creditManager).fees();
+    /// @dev Loads `creditManager`'s state variables used in liquidation
+    function _initVars(address creditManager) internal view returns (LiquidationVars memory vars) {
+        vars.creditManager = creditManager;
+        vars.creditFacade = ICreditManagerV3(creditManager).creditFacade();
+        vars.priceOracle = ICreditManagerV3(creditManager).priceOracle();
+        vars.underlying = ICreditManagerV3(creditManager).underlying();
+        (, vars.feeRate, vars.discountRate,,) = ICreditManagerV3(creditManager).fees();
     }
 
+    /// @dev Internal function that checks liquidation validity:
+    ///      - `token` is not underlying
+    ///      - `creditAccount` is liquidatable after applying `priceUpdates`
     function _checkLiquidation(
-        LiquidationState memory state,
+        LiquidationVars memory vars,
         address creditAccount,
         address token,
         PriceUpdate[] calldata priceUpdates
     ) internal {
-        if (token == state.underlying) revert UnderlyingNotLiquidatableException();
+        if (token == vars.underlying) revert UnderlyingNotLiquidatableException();
 
         uint256 len = priceUpdates.length;
         unchecked {
             for (uint256 i; i < len; ++i) {
                 PriceUpdate calldata update = priceUpdates[i];
-                address priceFeed = IPriceOracleV3(state.priceOracle).priceFeedsRaw(update.token, update.reserve);
+                address priceFeed = IPriceOracleV3(vars.priceOracle).priceFeedsRaw(update.token, update.reserve);
                 if (priceFeed == address(0)) revert PriceFeedDoesNotExistException();
                 IUpdatablePriceFeed(priceFeed).updatePrice(update.data);
             }
         }
-        if (!ICreditManagerV3(state.creditManager).isLiquidatable(creditAccount, PERCENTAGE_FACTOR)) {
+        if (!ICreditManagerV3(vars.creditManager).isLiquidatable(creditAccount, PERCENTAGE_FACTOR)) {
             revert CreditAccountNotLiquidatableException();
         }
     }
 
-    function _getSeizedAmount(LiquidationState memory state, address token, uint256 repaidAmount)
-        internal
-        view
-        returns (uint256)
-    {
-        return IPriceOracleV3(state.priceOracle).convert(repaidAmount, state.underlying, token) * PERCENTAGE_FACTOR
-            / state.discountRate;
-    }
-
-    function _getRepaidAmount(LiquidationState memory state, address token, uint256 seizedAmount)
-        internal
-        view
-        returns (uint256)
-    {
-        return IPriceOracleV3(state.priceOracle).convert(seizedAmount, token, state.underlying) * state.discountRate
-            / PERCENTAGE_FACTOR;
-    }
-
+    /// @dev Internal function that executes liquidation:
+    ///      - transfers `repaidAmount` of underlying from the caller
+    ///      - performs a multicall on `creditAccount` that repays debt and withdraws `seizedAmount` of `token` to `to`
     function _executeLiquidation(
-        LiquidationState memory state,
+        LiquidationVars memory vars,
         address creditAccount,
         address token,
         uint256 repaidAmount,
         uint256 seizedAmount,
         address to
     ) internal {
-        IERC20(state.underlying).transferFrom(msg.sender, address(this), repaidAmount);
-        repaidAmount -= repaidAmount * state.feeRate / PERCENTAGE_FACTOR;
+        IERC20(vars.underlying).transferFrom(msg.sender, address(this), repaidAmount);
+        repaidAmount -= repaidAmount * vars.feeRate / PERCENTAGE_FACTOR;
 
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
-            target: state.creditFacade,
-            callData: abi.encodeCall(ICreditFacadeV3Multicall.addCollateral, (state.underlying, repaidAmount))
+            target: vars.creditFacade,
+            callData: abi.encodeCall(ICreditFacadeV3Multicall.addCollateral, (vars.underlying, repaidAmount))
         });
         calls[1] = MultiCall({
-            target: state.creditFacade,
+            target: vars.creditFacade,
             callData: abi.encodeCall(ICreditFacadeV3Multicall.decreaseDebt, (repaidAmount))
         });
         calls[2] = MultiCall({
-            target: state.creditFacade,
+            target: vars.creditFacade,
             callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (token, seizedAmount, to))
         });
-        ICreditFacadeV3(state.creditFacade).botMulticall(creditAccount, calls);
+        ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
 
-        emit Liquidate(state.creditManager, creditAccount, token, repaidAmount, seizedAmount);
+        emit Liquidate(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount);
     }
 }
