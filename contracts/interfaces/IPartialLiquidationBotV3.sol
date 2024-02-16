@@ -35,12 +35,14 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param token Collateral token seized from `creditAccount`
     /// @param repaidDebt Amount of `creditAccount`'s debt repaid
     /// @param seizedCollateral Amount of `token` seized from `creditAccount`
+    /// @param fee Amount of underlying withheld on the bot as liqudiation fee
     event Liquidate(
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
         uint256 repaidDebt,
-        uint256 seizedCollateral
+        uint256 seizedCollateral,
+        uint256 fee
     );
 
     // ------ //

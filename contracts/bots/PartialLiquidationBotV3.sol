@@ -194,7 +194,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         address to
     ) internal {
         IERC20(vars.underlying).transferFrom(msg.sender, address(this), repaidAmount);
-        repaidAmount -= repaidAmount * vars.feeRate / PERCENTAGE_FACTOR;
+        uint256 fee = repaidAmount * vars.feeRate / PERCENTAGE_FACTOR;
+        repaidAmount -= fee;
 
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
@@ -211,6 +212,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTra
         });
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
 
-        emit Liquidate(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount);
+        emit Liquidate(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount, fee);
     }
 }
