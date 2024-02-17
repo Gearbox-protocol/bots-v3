@@ -36,7 +36,7 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param repaidDebt Amount of `creditAccount`'s debt repaid
     /// @param seizedCollateral Amount of `token` seized from `creditAccount`
     /// @param fee Amount of underlying withheld on the bot as liqudiation fee
-    event Liquidate(
+    event LiquidatePartial(
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
@@ -66,21 +66,19 @@ interface IPartialLiquidationBotV3 is IVersion {
     // ----------- //
 
     /// @notice Liquidates credit account by repaying the given amount of its debt in exchange for discounted collateral
-    /// @param creditManager Credit manager to liquidate an account in
     /// @param creditAccount Credit account to liquidate
     /// @param token Collateral token to seize
-    /// @param repaidAmount Amount of `creditManager`'s underlying to repay
+    /// @param repaidAmount Amount of underlying to repay
     /// @param minSeizedAmount Minimum amount of `token` to seize from `creditAccount`
     /// @param to Address to send seized `token` to
     /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
     /// @return seizedAmount Amount of `token` seized
-    /// @dev Reverts if `creditManager` is not an allowed credit manager
-    /// @dev Reverts if `token` is `creditManager`'s underlying
+    /// @dev Reverts if `creditAccount`'s credit manager is not allowed
+    /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
     function liquidateExactDebt(
-        address creditManager,
         address creditAccount,
         address token,
         uint256 repaidAmount,
@@ -90,21 +88,19 @@ interface IPartialLiquidationBotV3 is IVersion {
     ) external returns (uint256 seizedAmount);
 
     /// @notice Liquidates credit account by repaying its debt in exchange for the given amount of discounted collateral
-    /// @param creditManager Credit manager to liquidate an account in
     /// @param creditAccount Credit account to liquidate
     /// @param token Collateral token to seize
     /// @param seizedAmount Amount of `token` to seize from `creditAccount`
-    /// @param maxRepaidAmount Maxiumum amount of `creditManager`'s underlying to repay
+    /// @param maxRepaidAmount Maxiumum amount of underlying to repay
     /// @param to Address to send seized `token` to
     /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
-    /// @return repaidAmount Amount of `creditManager`'s underlying repaid
-    /// @dev Reverts if `creditManager` is not an allowed credit manager
-    /// @dev Reverts if `token` is `creditManager`'s underlying
+    /// @return repaidAmount Amount of underlying repaid
+    /// @dev Reverts if `creditAccount`'s credit manager is not allowed
+    /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
     /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
     function liquidateExactCollateral(
-        address creditManager,
         address creditAccount,
         address token,
         uint256 seizedAmount,
@@ -128,8 +124,13 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @dev Reverts if caller is not configurator
     function addCreditManager(address creditManager) external;
 
-    /// @notice Withdraws `amount` of accumulated fees in `token` to `to`
-    /// @dev If `amount` is `type(uint256).max`, withdraws full balance
-    /// @dev Reverts if caller is not configurator
-    function withdrawFees(address token, uint256 amount, address to) external;
+    // ---- //
+    // FEES //
+    // ---- //
+
+    /// @notice Treasury to send collected fees to
+    function treasury() external view returns (address);
+
+    /// @notice Sends accumulated fees to the treasury
+    function collectFees() external;
 }
