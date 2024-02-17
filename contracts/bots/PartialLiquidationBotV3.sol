@@ -22,7 +22,7 @@ import {
     PriceFeedDoesNotExistException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
 import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
-import {ACLTrait} from "@gearbox-protocol/core-v3/contracts/traits/ACLTrait.sol";
+import {ACLNonReentrantTrait} from "@gearbox-protocol/core-v3/contracts/traits/ACLNonReentrantTrait.sol";
 import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -44,7 +44,7 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///         - liquidator premium and DAO fee are the same as for the full liquidation in a given credit manager
 ///           (although fees are accumulated in this contract instead of being deposited into pools)
 ///         - this implementation can't handle fee-on-transfer underlyings
-contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLTrait, ContractsRegisterTrait {
+contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLNonReentrantTrait, ContractsRegisterTrait {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     /// @dev Internal liquidation variables
@@ -68,7 +68,10 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLTrait, Contract
 
     /// @notice Constructor
     /// @param addressProvider Address provider contract address
-    constructor(address addressProvider) ACLTrait(addressProvider) ContractsRegisterTrait(addressProvider) {
+    constructor(address addressProvider)
+        ACLNonReentrantTrait(addressProvider)
+        ContractsRegisterTrait(addressProvider)
+    {
         treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
     }
 
@@ -84,7 +87,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLTrait, Contract
         uint256 minSeizedAmount,
         address to,
         PriceUpdate[] calldata priceUpdates
-    ) external override returns (uint256 seizedAmount) {
+    ) external override nonReentrant returns (uint256 seizedAmount) {
         LiquidationVars memory vars = _initVars(creditAccount, token);
         _applyOnDemandPriceUpdates(vars, priceUpdates);
         _revertIfNotLiquidatable(vars, creditAccount);
@@ -104,7 +107,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ACLTrait, Contract
         uint256 maxRepaidAmount,
         address to,
         PriceUpdate[] calldata priceUpdates
-    ) external override returns (uint256 repaidAmount) {
+    ) external override nonReentrant returns (uint256 repaidAmount) {
         LiquidationVars memory vars = _initVars(creditAccount, token);
         _applyOnDemandPriceUpdates(vars, priceUpdates);
         _revertIfNotLiquidatable(vars, creditAccount);
