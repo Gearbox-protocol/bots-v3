@@ -3,6 +3,8 @@
 // (c) Gearbox Foundation, 2024.
 pragma solidity ^0.8.17;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import {IUpdatablePriceFeed} from "@gearbox-protocol/core-v2/contracts/interfaces/IPriceFeed.sol";
 import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v2/contracts/libraries/Constants.sol";
@@ -23,8 +25,6 @@ import {
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
 import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
 
@@ -157,6 +157,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     ) internal {
         IERC20(vars.underlying).transferFrom(msg.sender, creditAccount, repaidAmount);
         uint256 fee = repaidAmount * vars.feeLiquidation / PERCENTAGE_FACTOR;
+        repaidAmount -= fee;
 
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
@@ -173,6 +174,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         });
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
 
-        emit LiquidatePartial(vars.creditManager, creditAccount, token, repaidAmount - fee, seizedAmount, fee);
+        emit LiquidatePartial(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount, fee);
     }
 }
