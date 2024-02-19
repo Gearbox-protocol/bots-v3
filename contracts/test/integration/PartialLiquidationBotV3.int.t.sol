@@ -104,7 +104,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         creditAccount = _openCreditAccount();
     }
 
-    function _openCreditAccount() internal returns (address creditAccount) {
+    function _openCreditAccount() internal returns (address _creditAccount) {
         uint96 quotaAmount = uint96(6 * daiAmount / 5);
 
         MultiCall[] memory calls = new MultiCall[](4);
@@ -126,7 +126,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         });
 
         vm.prank(USER);
-        creditAccount = creditFacade.openCreditAccount(USER, calls, 0);
+        _creditAccount = creditFacade.openCreditAccount(USER, calls, 0);
 
         vm.roll(block.number + 1);
         vm.warp(block.timestamp + 12);

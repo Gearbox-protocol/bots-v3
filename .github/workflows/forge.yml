@@ -40,9 +40,9 @@ jobs:
         id: fmt
 
       - name: Compile contracts
-        run: forge build --sizes
+        run: forge build
         id: build
 
       - name: Run tests
-        run: forge test -vvv
+        run: forge test -vv
         id: test
