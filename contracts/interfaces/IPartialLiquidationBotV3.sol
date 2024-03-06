@@ -62,6 +62,15 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @notice Treasury to send liquidation fees to
     function treasury() external view returns (address);
 
+    /// @notice Minimum health factor at which the liquidation is triggered
+    function minHealthFactor() external view returns (uint16);
+
+    /// @notice Scale factor of credit manager's liquidation discount
+    function discountScaleFactor() external view returns (uint16);
+
+    /// @notice Scale factor of credit manager's liquidation fee
+    function feeScaleFactor() external view returns (uint16);
+
     /// @notice Liquidates credit account by repaying the given amount of its debt in exchange for discounted collateral
     /// @param creditAccount Credit account to liquidate
     /// @param token Collateral token to seize

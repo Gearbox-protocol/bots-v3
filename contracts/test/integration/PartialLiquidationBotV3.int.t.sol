@@ -77,7 +77,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     // ----- //
 
     function _setUp() internal {
-        bot = new PartialLiquidationBotV3(address(addressProvider));
+        bot = new PartialLiquidationBotV3(address(addressProvider), 1e4, 1e4, 1e4);
 
         vm.prank(CONFIGURATOR);
         botList.setBotSpecialPermissions(
