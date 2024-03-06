@@ -80,6 +80,7 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
     /// @return seizedAmount Amount of `token` seized
     /// @dev Requires underlying token approval from caller to this contract
+    /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
@@ -102,6 +103,7 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
     /// @return repaidAmount Amount of underlying repaid
     /// @dev Requires underlying token approval from caller to this contract
+    /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
