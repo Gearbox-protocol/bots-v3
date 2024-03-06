@@ -30,6 +30,7 @@ import {
     PriceFeedDoesNotExistException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
 import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
 
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
@@ -49,8 +50,7 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///           (although fees are sent to the treasury instead of being deposited into pools)
 ///         - this implementation can't handle fee-on-transfer underlyings
 /// @dev Requires permissions for `withdrawCollateral` and `decreaseDebt` calls in the bot list
-/// @dev Absence of validation that interacted contracts are part of Gearbox is intentional
-contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTrait {
+contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterTrait, ReentrancyGuardTrait {
     /// @dev Internal liquidation variables
     struct LiquidationVars {
         address creditManager;
@@ -58,8 +58,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         address priceOracle;
         address underlying;
         uint256 version;
-        uint256 feeLiquidation;
-        uint256 liquidationDiscount;
+        uint256 scaledFeeLiquidation;
+        uint256 scaledLiquidationDiscount;
     }
 
     /// @inheritdoc IVersion
@@ -84,7 +84,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee (must be <= `PERCENTAGE_FACTOR`)
     /// @dev The last three parameters can be used to setup a liquidation prevention bot which triggers earlier and
     ///      charges lower fees than normal liquidation
-    constructor(address addressProvider, uint16 minHealthFactor_, uint16 discountScaleFactor_, uint16 feeScaleFactor_) {
+    constructor(address addressProvider, uint16 minHealthFactor_, uint16 discountScaleFactor_, uint16 feeScaleFactor_)
+        ContractsRegisterTrait(addressProvider)
+    {
         treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
         if (minHealthFactor_ < PERCENTAGE_FACTOR) revert IncorrectParameterException();
         if (discountScaleFactor_ > PERCENTAGE_FACTOR) revert IncorrectParameterException();
@@ -112,7 +114,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         _validateLiquidation(vars, creditAccount, token);
 
         seizedAmount = IPriceOracleV3(vars.priceOracle).convert(repaidAmount, vars.underlying, token)
-            * PERCENTAGE_FACTOR / vars.liquidationDiscount;
+            * PERCENTAGE_FACTOR / vars.scaledLiquidationDiscount;
         if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
 
         _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
@@ -132,7 +134,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         _validateLiquidation(vars, creditAccount, token);
 
         repaidAmount = IPriceOracleV3(vars.priceOracle).convert(seizedAmount, token, vars.underlying)
-            * vars.liquidationDiscount / PERCENTAGE_FACTOR;
+            * vars.scaledLiquidationDiscount / PERCENTAGE_FACTOR;
         if (repaidAmount > maxRepaidAmount) revert RepaidMoreThanAllowedException();
 
         _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
@@ -150,8 +152,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         vars.underlying = ICreditManagerV3(vars.creditManager).underlying();
         vars.version = ICreditManagerV3(vars.creditManager).version();
         (, uint256 feeLiquidation, uint256 liquidationDiscount,,) = ICreditManagerV3(vars.creditManager).fees();
-        vars.liquidationDiscount = liquidationDiscount * discountScaleFactor / PERCENTAGE_FACTOR;
-        vars.feeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
+        vars.scaledLiquidationDiscount = liquidationDiscount * discountScaleFactor / PERCENTAGE_FACTOR;
+        vars.scaledFeeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
     }
 
     /// @dev Applies on-demand price feed updates, reverts if trying to update unknown price feeds
@@ -165,8 +167,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         }
     }
 
-    /// @dev Ensures that `creditAccount` is liquidatable and `token` is not underlying
+    /// @dev Ensures that `creditAccount` is liquidatable, its credit manager is registered and `token` is not underlying
     function _validateLiquidation(LiquidationVars memory vars, address creditAccount, address token) internal view {
+        _ensureRegisteredCreditManager(vars.creditManager);
         if (token == vars.underlying) revert UnderlyingNotLiquidatableException();
 
         bool isLiquidatable = _isWorkaroundNeeded(vars)
@@ -188,7 +191,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         address to
     ) internal {
         IERC20(vars.underlying).transferFrom(msg.sender, creditAccount, repaidAmount);
-        uint256 fee = repaidAmount * vars.feeLiquidation / PERCENTAGE_FACTOR;
+        uint256 fee = repaidAmount * vars.scaledFeeLiquidation / PERCENTAGE_FACTOR;
         repaidAmount -= fee;
 
         MultiCall[] memory calls = new MultiCall[](4);
