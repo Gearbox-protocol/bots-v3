@@ -46,6 +46,9 @@ interface IPartialLiquidationBotV3 is IVersion {
     // ERRORS //
     // ------ //
 
+    /// @notice Thrown when health factor after liquidation is greater than maximum allowed
+    error LiquidatedMoreThanNeededException();
+
     /// @notice Thrown when amount of underlying repaid is greater than allowed
     error RepaidMoreThanAllowedException();
 
@@ -64,6 +67,9 @@ interface IPartialLiquidationBotV3 is IVersion {
 
     /// @notice Minimum health factor at which the liquidation is triggered
     function minHealthFactor() external view returns (uint16);
+
+    /// @notice Maximum health factor allowed after the liquidation
+    function maxHealthFactor() external view returns (uint16);
 
     /// @notice Scale factor of credit manager's liquidation discount
     function discountScaleFactor() external view returns (uint16);

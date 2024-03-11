@@ -72,6 +72,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     uint16 public immutable override minHealthFactor;
 
     /// @inheritdoc IPartialLiquidationBotV3
+    uint16 public immutable override maxHealthFactor;
+
+    /// @inheritdoc IPartialLiquidationBotV3
     uint16 public immutable override discountScaleFactor;
 
     /// @inheritdoc IPartialLiquidationBotV3
@@ -79,19 +82,26 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
 
     /// @notice Constructor
     /// @param addressProvider Address provider contract address
-    /// @param minHealthFactor_ Minimum health factor to trigger the liquidation (must be >= `PERCENTAGE_FACTOR`)
+    /// @param minHealthFactor_ Minimum health factor to trigger the liquidation (must be >= `PERCENTAGE_FACTOR`).
+    ///        Can be used to setup a liquidation prevention bot that triggers earlier but charges lower fees.
+    /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation (must be >= `minHealthFactor_`).
+    ///        Can be used to limit the liquidation size. `type(uint16).max` disables the check.
     /// @param discountScaleFactor_ Factor to scale credit manager's liquidation discount (must be <= `PERCENTAGE_FACTOR`)
     /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee (must be <= `PERCENTAGE_FACTOR`)
-    /// @dev The last three parameters can be used to setup a liquidation prevention bot which triggers earlier and
-    ///      charges lower fees than normal liquidation
-    constructor(address addressProvider, uint16 minHealthFactor_, uint16 discountScaleFactor_, uint16 feeScaleFactor_)
-        ContractsRegisterTrait(addressProvider)
-    {
+    constructor(
+        address addressProvider,
+        uint16 minHealthFactor_,
+        uint16 maxHealthFactor_,
+        uint16 discountScaleFactor_,
+        uint16 feeScaleFactor_
+    ) ContractsRegisterTrait(addressProvider) {
         treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
         if (minHealthFactor_ < PERCENTAGE_FACTOR) revert IncorrectParameterException();
+        if (maxHealthFactor_ < minHealthFactor_) revert IncorrectParameterException();
         if (discountScaleFactor_ > PERCENTAGE_FACTOR) revert IncorrectParameterException();
         if (feeScaleFactor_ > PERCENTAGE_FACTOR) revert IncorrectParameterException();
         minHealthFactor = minHealthFactor_;
+        maxHealthFactor = maxHealthFactor_;
         discountScaleFactor = discountScaleFactor_;
         feeScaleFactor = feeScaleFactor_;
     }
@@ -173,7 +183,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         if (token == vars.underlying) revert UnderlyingNotLiquidatableException();
 
         bool isLiquidatable = _isWorkaroundNeeded(vars)
-            ? _isLiquidatableWorkaround(vars.creditManager, creditAccount)
+            ? _isLiquidatableWorkaround(vars.creditManager, creditAccount, minHealthFactor, false)
             : ICreditManagerV3(vars.creditManager).isLiquidatable(creditAccount, minHealthFactor);
         if (!isLiquidatable) revert CreditAccountNotLiquidatableException();
     }
@@ -213,22 +223,35 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         });
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
 
-        if (_isWorkaroundNeeded(vars) && _isLiquidatableWorkaround(vars.creditManager, creditAccount)) {
-            revert NotEnoughCollateralException();
-        }
+        if (
+            _isWorkaroundNeeded(vars)
+                && _isLiquidatableWorkaround(vars.creditManager, creditAccount, minHealthFactor, true)
+        ) revert NotEnoughCollateralException();
+
+        if (
+            maxHealthFactor != type(uint16).max
+                && !_isLiquidatableWorkaround(vars.creditManager, creditAccount, maxHealthFactor, true)
+        ) revert LiquidatedMoreThanNeededException();
 
         emit LiquidatePartial(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount, fee);
     }
 
-    /// @dev Whether workaround is needed for collateral check with non-trivial min health factor
+    /// @dev Whether workaround is needed for collateral check with non-trivial health factor
     function _isWorkaroundNeeded(LiquidationVars memory vars) internal view returns (bool) {
         return vars.version == 3_00 && minHealthFactor > PERCENTAGE_FACTOR;
     }
 
-    /// @dev Collateral check workaround with non-trivial min health factor
-    function _isLiquidatableWorkaround(address creditManager, address creditAccount) internal view returns (bool) {
-        CollateralDebtData memory cdd =
-            ICreditManagerV3(creditManager).calcDebtAndCollateral(creditAccount, CollateralCalcTask.DEBT_COLLATERAL);
-        return cdd.twvUSD < cdd.totalDebtUSD * minHealthFactor / PERCENTAGE_FACTOR;
+    /// @dev Collateral check workaround with non-trivial health factor
+    function _isLiquidatableWorkaround(
+        address creditManager,
+        address creditAccount,
+        uint16 healthFactor,
+        bool useSafePrices
+    ) internal view returns (bool) {
+        CollateralDebtData memory cdd = ICreditManagerV3(creditManager).calcDebtAndCollateral(
+            creditAccount,
+            useSafePrices ? CollateralCalcTask.DEBT_COLLATERAL_SAFE_PRICES : CollateralCalcTask.DEBT_COLLATERAL
+        );
+        return cdd.twvUSD < cdd.totalDebtUSD * healthFactor / PERCENTAGE_FACTOR;
     }
 }
