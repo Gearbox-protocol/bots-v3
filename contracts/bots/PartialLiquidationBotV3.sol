@@ -96,10 +96,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         uint16 feeScaleFactor_
     ) ContractsRegisterTrait(addressProvider) {
         treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
-        if (
-            minHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_
-                || premiumScaleFactor_ > PERCENTAGE_FACTOR || feeScaleFactor_ > PERCENTAGE_FACTOR
-        ) revert IncorrectParameterException();
+        if (minHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_) {
+            revert IncorrectParameterException();
+        }
         minHealthFactor = minHealthFactor_;
         maxHealthFactor = maxHealthFactor_;
         premiumScaleFactor = premiumScaleFactor_;
@@ -223,7 +222,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     }
 
     /// @dev Ensures that `creditAccount`'s health factor is within allowed range after partial liquidation
-    function _checkHealthFactor(LiquidationVars memory vars, address creditAccount) internal {
+    function _checkHealthFactor(LiquidationVars memory vars, address creditAccount) internal view {
         if (minHealthFactor == PERCENTAGE_FACTOR && maxHealthFactor == type(uint16).max) return;
         CollateralDebtData memory cdd = _calcDebtAndCollateral(vars.creditManager, creditAccount);
         if (minHealthFactor != PERCENTAGE_FACTOR && _isLiquidatable(cdd, minHealthFactor)) {
@@ -244,7 +243,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     }
 
     /// @dev Checks whether account's health factor is below `healthFactor`
-    function _isLiquidatable(CollateralDebtData memory cdd, uint16 healthFactor) internal view returns (bool) {
+    function _isLiquidatable(CollateralDebtData memory cdd, uint16 healthFactor) internal pure returns (bool) {
         return cdd.twvUSD < cdd.totalDebtUSD * healthFactor / PERCENTAGE_FACTOR;
     }
 }
