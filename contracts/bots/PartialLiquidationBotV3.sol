@@ -45,6 +45,8 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///         - since operation repays debt, an account can't be partially liquidated if its debt is near minimum
 ///         - due to `withdrawCollateral` inside the liquidation, collateral check with safe prices is triggered,
 ///           which would only succeed if reserve price feeds for collateral tokens are set in the price oracle
+///         - health factor range check is made using normal prices, which, under certain circumstances, may be
+///           mutually exclusive with the former
 ///         - liquidator premium and DAO fee are the same as for the full liquidation in a given credit manager
 ///           (although fees are sent to the treasury instead of being deposited into pools)
 ///         - this implementation can't handle fee-on-transfer underlyings
@@ -80,12 +82,12 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
 
     /// @notice Constructor
     /// @param addressProvider Address provider contract address
-    /// @param minHealthFactor_ Minimum health factor to trigger the liquidation (must be >= `PERCENTAGE_FACTOR`)
-    /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation (must be >= `minHealthFactor_`)
-    /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium (must be <= `PERCENTAGE_FACTOR`)
-    /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee (must be <= `PERCENTAGE_FACTOR`)
-    /// @dev The last four parameters can be used to setup a liquidation prevention bot which triggers earlier,
-    ///      limits the liquidation size and charges lower fees than normal liquidation
+    /// @param minHealthFactor_ Minimum health factor to trigger the liquidation
+    /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation
+    /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium
+    /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee
+    /// @dev This bot can be set up in a liquidation prevention mode, which triggers earlier (if min HF is > 1),
+    ///      limits size (if max HF is < `type(uint16).max`) and charges less (if premium and fee scale are < 1)
     constructor(
         address addressProvider,
         uint16 minHealthFactor_,
