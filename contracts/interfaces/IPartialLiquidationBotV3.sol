@@ -46,6 +46,12 @@ interface IPartialLiquidationBotV3 is IVersion {
     // ERRORS //
     // ------ //
 
+    /// @notice Thrown when health factor after liquidation is less than minimum allowed
+    error LiquidatedLessThanNeededException();
+
+    /// @notice Thrown when health factor after liquidation is greater than maximum allowed
+    error LiquidatedMoreThanNeededException();
+
     /// @notice Thrown when amount of underlying repaid is greater than allowed
     error RepaidMoreThanAllowedException();
 
@@ -65,8 +71,11 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @notice Minimum health factor at which the liquidation is triggered
     function minHealthFactor() external view returns (uint16);
 
-    /// @notice Scale factor of credit manager's liquidation discount
-    function discountScaleFactor() external view returns (uint16);
+    /// @notice Maximum health factor allowed after the liquidation
+    function maxHealthFactor() external view returns (uint16);
+
+    /// @notice Scale factor of credit manager's liquidation premium
+    function premiumScaleFactor() external view returns (uint16);
 
     /// @notice Scale factor of credit manager's liquidation fee
     function feeScaleFactor() external view returns (uint16);
@@ -83,8 +92,9 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
-    /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
+    /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
+    /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
     function liquidateExactDebt(
         address creditAccount,
         address token,
@@ -106,8 +116,9 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
-    /// @dev Reverts if `creditAccount` is not liquidatable after applying `priceUpdates`
+    /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
+    /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
     function liquidateExactCollateral(
         address creditAccount,
         address token,

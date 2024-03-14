@@ -77,7 +77,24 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     // ----- //
 
     function _setUp() internal {
-        bot = new PartialLiquidationBotV3(address(addressProvider), 1e4, 1e4, 1e4);
+        _setUp(BotParams(1e4, type(uint16).max, 1e4, 1e4));
+    }
+
+    struct BotParams {
+        uint16 minHealthFactor;
+        uint16 maxHealthFactor;
+        uint16 premiumScaleFactor;
+        uint16 feeScaleFactor;
+    }
+
+    function _setUp(BotParams memory params) internal {
+        bot = new PartialLiquidationBotV3(
+            address(addressProvider),
+            params.minHealthFactor,
+            params.maxHealthFactor,
+            params.premiumScaleFactor,
+            params.feeScaleFactor
+        );
 
         vm.prank(CONFIGURATOR);
         botList.setBotSpecialPermissions(
@@ -330,5 +347,33 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         bot.liquidateExactDebt(creditAccount, link, daiAmount * 3 / 4, 0, FRIEND, priceUpdates);
 
         assertEq(tokenTestSuite.balanceOf(dai, creditAccount), daiAmount / 10, "Incorrect DAI balance");
+    }
+
+    function test_I_PL_06_partialLiquidation_works_as_expected_with_non_default_params() public creditTest {
+        _setUp(BotParams(1.02e4, 1.05e4, 0.5e4, 0));
+
+        // set collateral price such that account's health factor is above 1 but below 1.02
+        newLinkPrice = 13.75e8;
+        PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
+        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+
+        // reverts on liquidating less than needed
+        vm.expectRevert(IPartialLiquidationBotV3.LiquidatedLessThanNeededException.selector);
+        vm.prank(LIQUIDATOR);
+        bot.liquidateExactDebt(creditAccount, link, 0, 0, FRIEND, priceUpdates);
+
+        // reverts on liquidating more than needed (note that this amount works in other tests)
+        vm.expectRevert(IPartialLiquidationBotV3.LiquidatedMoreThanNeededException.selector);
+        vm.prank(LIQUIDATOR);
+        bot.liquidateExactDebt(creditAccount, link, daiAmount * 3 / 4, 0, FRIEND, priceUpdates);
+
+        // here we liquidate 12.5K DAI of debt, which results in 12.5K / 13.75 / 0.98 ~= 928 LINK seized
+        // after the liquidation, account has 87.5K DAI of debt and 9072 LINK of collateral, which gives
+        // HF = 9072 * 13.75 * 0.73 / 87500 ~= 1.04, which is within the allowed range
+        uint256 repaidAmount = daiAmount / 8;
+        uint256 expectedSeizedAmount = repaidAmount * uint256(50 * daiPrice) / uint256(49 * newLinkPrice);
+        vm.prank(LIQUIDATOR);
+        uint256 seizedAmount = bot.liquidateExactDebt(creditAccount, link, repaidAmount, 0, FRIEND, priceUpdates);
+        assertApproxEqAbs(seizedAmount, expectedSeizedAmount, 1, "Incorrect seized amount");
     }
 }
