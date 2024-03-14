@@ -96,7 +96,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         uint16 feeScaleFactor_
     ) ContractsRegisterTrait(addressProvider) {
         treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
-        if (minHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_) {
+        if (maxHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_) {
             revert IncorrectParameterException();
         }
         minHealthFactor = minHealthFactor_;
@@ -223,9 +223,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
 
     /// @dev Ensures that `creditAccount`'s health factor is within allowed range after partial liquidation
     function _checkHealthFactor(LiquidationVars memory vars, address creditAccount) internal view {
-        if (minHealthFactor == PERCENTAGE_FACTOR && maxHealthFactor == type(uint16).max) return;
+        if (minHealthFactor <= PERCENTAGE_FACTOR && maxHealthFactor == type(uint16).max) return;
         CollateralDebtData memory cdd = _calcDebtAndCollateral(vars.creditManager, creditAccount);
-        if (minHealthFactor != PERCENTAGE_FACTOR && _isLiquidatable(cdd, minHealthFactor)) {
+        if (minHealthFactor > PERCENTAGE_FACTOR && _isLiquidatable(cdd, minHealthFactor)) {
             revert LiquidatedLessThanNeededException();
         }
         if (maxHealthFactor != type(uint16).max && !_isLiquidatable(cdd, maxHealthFactor + 1)) {
