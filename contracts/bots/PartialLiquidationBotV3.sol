@@ -4,6 +4,7 @@
 pragma solidity ^0.8.17;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IUpdatablePriceFeed} from "@gearbox-protocol/core-v2/contracts/interfaces/IPriceFeed.sol";
 import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
@@ -52,6 +53,8 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///         - this implementation can't handle fee-on-transfer underlyings
 /// @dev Requires permissions for `withdrawCollateral` and `decreaseDebt` calls in the bot list
 contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterTrait, ReentrancyGuardTrait {
+    using SafeERC20 for IERC20;
+
     /// @dev Internal liquidation variables
     struct LiquidationVars {
         address creditManager;
@@ -199,7 +202,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         uint256 seizedAmount,
         address to
     ) internal {
-        IERC20(vars.underlying).transferFrom(msg.sender, creditAccount, repaidAmount);
+        IERC20(vars.underlying).safeTransferFrom(msg.sender, creditAccount, repaidAmount);
         uint256 fee = repaidAmount * vars.feeLiquidation / PERCENTAGE_FACTOR;
         repaidAmount -= fee;
 
