@@ -2,11 +2,9 @@ name: Forge
 
 on:
   push:
-    branches:
-      - "main"
+    branches: ["main", "next"]
   pull_request:
-    branches:
-      - "main"
+    branches: ["main", "next"]
 
 env:
   HUSKY: 0
