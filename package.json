@@ -24,7 +24,7 @@
     "@commitlint/cli": "18.6.0",
     "@commitlint/config-conventional": "18.6.0",
     "@gearbox-protocol/core-v2": "^1.19.0-base.17",
-    "@gearbox-protocol/core-v3": "^1.47.1",
+    "@gearbox-protocol/core-v3": "^1.50.0-next.2",
     "@gearbox-protocol/sdk-gov": "^1.29.0",
     "@openzeppelin/contracts": "4.9.3",
     "ds-test": "dapphub/ds-test",

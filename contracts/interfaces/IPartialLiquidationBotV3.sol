@@ -4,24 +4,13 @@
 pragma solidity ^0.8.17;
 
 import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
+import {IBotV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IBotV3.sol";
+import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {BotType} from "./BotType.sol";
 
 /// @title Partial liquidation bot V3
 /// @author Gearbox Foundation
-interface IPartialLiquidationBotV3 is IVersion {
-    // ----- //
-    // TYPES //
-    // ----- //
-
-    /// @notice Update params for an on-demand price feed in the price oracle
-    /// @param token Token to update the price for
-    /// @param reserve Whether main or reserve feed should be updated
-    /// @param data Update data
-    struct PriceUpdate {
-        address token;
-        bool reserve;
-        bytes data;
-    }
-
+interface IPartialLiquidationBotV3 is IVersion, IBotV3 {
     // ------ //
     // EVENTS //
     // ------ //
@@ -65,6 +54,9 @@ interface IPartialLiquidationBotV3 is IVersion {
     // LIQUIDATION //
     // ----------- //
 
+    /// @notice Bot type
+    function botType() external view returns (BotType);
+
     /// @notice Treasury to send liquidation fees to
     function treasury() external view returns (address);
 
@@ -86,12 +78,11 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param repaidAmount Amount of underlying to repay
     /// @param minSeizedAmount Minimum amount of `token` to seize from `creditAccount`
     /// @param to Address to send seized `token` to
-    /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
+    /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return seizedAmount Amount of `token` seized
     /// @dev Requires underlying token approval from caller to this contract
     /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
-    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
     /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
@@ -110,12 +101,11 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param seizedAmount Amount of `token` to seize from `creditAccount`
     /// @param maxRepaidAmount Maxiumum amount of underlying to repay
     /// @param to Address to send seized `token` to
-    /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
+    /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return repaidAmount Amount of underlying repaid
     /// @dev Requires underlying token approval from caller to this contract
     /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
-    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
     /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation

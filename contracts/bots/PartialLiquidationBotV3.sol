@@ -6,7 +6,6 @@ pragma solidity ^0.8.17;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {IUpdatablePriceFeed} from "@gearbox-protocol/core-v2/contracts/interfaces/IPriceFeed.sol";
 import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v2/contracts/libraries/Constants.sol";
 import {MultiCall} from "@gearbox-protocol/core-v2/contracts/libraries/MultiCall.sol";
@@ -16,9 +15,14 @@ import {
     IAddressProviderV3,
     NO_VERSION_CONTROL
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IAddressProviderV3.sol";
+import {IBotV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IBotV3.sol";
 import {ICreditAccountV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditAccountV3.sol";
 import {ICreditFacadeV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
-import {ICreditFacadeV3Multicall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
+import {
+    DECREASE_DEBT_PERMISSION,
+    ICreditFacadeV3Multicall,
+    WITHDRAW_COLLATERAL_PERMISSION
+} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
 import {
     CollateralCalcTask,
     CollateralDebtData,
@@ -26,32 +30,32 @@ import {
 } from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
 import {
     CreditAccountNotLiquidatableException,
-    IncorrectParameterException,
-    PriceFeedDoesNotExistException
+    IncorrectParameterException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
-import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {IPriceOracleV3, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
 
+import {BotType} from "../interfaces/BotType.sol";
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
 
 /// @title Partial liquidation bot V3
 /// @author Gearbox Foundation
 /// @notice Partial liquidation bot helps to bring credit accounts back to solvency in conditions when liquidity
 ///         on the market is not enough to convert all account's collateral to underlying for full liquidation.
-///         Thanks to special permissons in the bot list, it extends the core system by allowing anyone to repay
-///         a fraction of liquidatable credit account's debt in exchange for discounted collateral, as long as
-///         account passes a collateral check after the operation.
-/// @notice There are certain limitations that liquidators, configurators and account owners should be aware of:
-///         - since operation repays debt, an account can't be partially liquidated if its debt is near minimum
+///         The bot allows anyone to repay a fraction of liquidatable credit account's debt in exchange for
+///         discounted collateral, as long as account passes a collateral check after the operation.
+///         There are certain limitations that liquidators, configurators and account owners should be aware of:
+///         - since operation repays debt, an account can't be partially liquidated if its debt is near minimum;
 ///         - due to `withdrawCollateral` inside the liquidation, collateral check with safe prices is triggered,
-///           which would only succeed if reserve price feeds for collateral tokens are set in the price oracle
+///           which would only succeed if reserve price feeds for collateral tokens are set in the price oracle;
 ///         - health factor range check is made using normal prices, which, under certain circumstances, may be
-///           mutually exclusive with the former
+///           mutually exclusive with the former;
 ///         - liquidator premium and DAO fee are the same as for the full liquidation in a given credit manager
-///           (although fees are sent to the treasury instead of being deposited into pools)
-///         - this implementation can't handle fee-on-transfer underlyings
-/// @dev Requires permissions for `withdrawCollateral` and `decreaseDebt` calls in the bot list
+///           (although fees are sent to the treasury instead of being deposited into pools);
+///         - this implementation can't handle fee-on-transfer underlyings.
+///         The bot can also be used for deleverage to prevent liquidations by triggering earlier, limiting
+///         operation size and/or charging less in premium and fees.
 contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterTrait, ReentrancyGuardTrait {
     using SafeERC20 for IERC20;
 
@@ -66,7 +70,13 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     }
 
     /// @inheritdoc IVersion
-    uint256 public constant override version = 3_00;
+    uint256 public constant override version = 3_10;
+
+    /// @inheritdoc IBotV3
+    uint192 public constant override requiredPermissions = DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION;
+
+    /// @inheritdoc IPartialLiquidationBotV3
+    BotType public constant override botType = BotType.PARTIAL_LIQUIDATION;
 
     /// @inheritdoc IPartialLiquidationBotV3
     address public immutable override treasury;
@@ -87,10 +97,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     /// @param addressProvider Address provider contract address
     /// @param minHealthFactor_ Minimum health factor to trigger the liquidation
     /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation
-    /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium
-    /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee
-    /// @dev This bot can be set up in a liquidation prevention mode, which triggers earlier (if min HF is > 1),
-    ///      limits size (if max HF is < `type(uint16).max`) and charges less (if premium and fee scale are < 1)
+    /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium by
+    /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee by
     constructor(
         address addressProvider,
         uint16 minHealthFactor_,
@@ -122,7 +130,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant returns (uint256 seizedAmount) {
         LiquidationVars memory vars = _initVars(creditAccount);
-        _applyOnDemandPriceUpdates(vars, priceUpdates);
+        IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
         _validateLiquidation(vars, creditAccount, token);
 
         seizedAmount = IPriceOracleV3(vars.priceOracle).convert(repaidAmount, vars.underlying, token)
@@ -143,7 +151,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant returns (uint256 repaidAmount) {
         LiquidationVars memory vars = _initVars(creditAccount);
-        _applyOnDemandPriceUpdates(vars, priceUpdates);
+        IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
         _validateLiquidation(vars, creditAccount, token);
 
         repaidAmount = IPriceOracleV3(vars.priceOracle).convert(seizedAmount, token, vars.underlying)
@@ -168,17 +176,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         vars.liquidationDiscount =
             PERCENTAGE_FACTOR - (PERCENTAGE_FACTOR - liquidationDiscount) * premiumScaleFactor / PERCENTAGE_FACTOR;
         vars.feeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
-    }
-
-    /// @dev Applies on-demand price feed updates, reverts if trying to update unknown price feeds
-    function _applyOnDemandPriceUpdates(LiquidationVars memory vars, PriceUpdate[] calldata priceUpdates) internal {
-        uint256 len = priceUpdates.length;
-        for (uint256 i; i < len; ++i) {
-            PriceUpdate calldata update = priceUpdates[i];
-            address priceFeed = IPriceOracleV3(vars.priceOracle).priceFeedsRaw(update.token, update.reserve);
-            if (priceFeed == address(0)) revert PriceFeedDoesNotExistException();
-            IUpdatablePriceFeed(priceFeed).updatePrice(update.data);
-        }
     }
 
     /// @dev Ensures that `creditAccount` is liquidatable, its credit manager is registered and `token` is not underlying

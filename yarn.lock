@@ -896,10 +896,10 @@
   resolved "https://registry.yarnpkg.com/@gearbox-protocol/core-v2/-/core-v2-1.19.0-base.17.tgz#1cb409fcaf866de194f9f7253d2e6ce0de5bcf7d"
   integrity sha512-jPE32s/8Ihj0i7zPuXB4NbtoeWkG819+axGDH2a4RLE+BQ2+Dh+mhhgvTTDahFVrllVkDTUW6maHGWhDnGmNAg==
 
-"@gearbox-protocol/core-v3@^1.47.1":
-  version "1.47.1"
-  resolved "https://registry.yarnpkg.com/@gearbox-protocol/core-v3/-/core-v3-1.47.1.tgz#9b6583441a722c9237b1e68984a63b0a9342e682"
-  integrity sha512-vSFvsUmUVRP/yHj85RPV/5RVhn5/cq02pQ5l2S3zeULh5NaiWO/o6d3Jrm4LdGOX/PnkTM5UW3LKqjwyzk8RaQ==
+"@gearbox-protocol/core-v3@^1.50.0-next.2":
+  version "1.50.0-next.2"
+  resolved "https://registry.yarnpkg.com/@gearbox-protocol/core-v3/-/core-v3-1.50.0-next.2.tgz#5d74d0ee7034d2a3251452dd3ff670b153dff0ef"
+  integrity sha512-QOY1bbtdIsLDoYFYiz5o3qPmArTGcbiusvh9aDVwNwopRqIdC4LSkk42XACJ2bmZ8XPIwbGXuugJ+/2duBVOxw==
 
 "@gearbox-protocol/sdk-gov@^1.29.0":
   version "1.29.0"
