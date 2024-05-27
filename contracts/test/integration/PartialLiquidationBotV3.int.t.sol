@@ -3,32 +3,24 @@
 // (c) Gearbox Foundation, 2024.
 pragma solidity ^0.8.17;
 
-import {MultiCall} from "@gearbox-protocol/core-v2/contracts/libraries/MultiCall.sol";
-
-import {ICreditFacadeV3Events} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+import {MultiCall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
 import {
     DECREASE_DEBT_PERMISSION,
     ICreditFacadeV3Multicall,
     WITHDRAW_COLLATERAL_PERMISSION
 } from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
+import {ManageDebtAction} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
 import {
     BorrowAmountOutOfLimitsException,
     CreditAccountNotLiquidatableException,
     DebtToZeroWithActiveQuotasException,
-    NotEnoughCollateralException,
-    PriceFeedDoesNotExistException
+    NotEnoughCollateralException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
+import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 
 import {IntegrationTestHelper} from "@gearbox-protocol/core-v3/contracts/test/helpers/IntegrationTestHelper.sol";
-import {
-    CONFIGURATOR,
-    DUMB_ADDRESS,
-    FRIEND,
-    LIQUIDATOR,
-    USER
-} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
+import {CONFIGURATOR, FRIEND, LIQUIDATOR, USER} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
 import {PriceFeedMock} from "@gearbox-protocol/core-v3/contracts/test/mocks/oracles/PriceFeedMock.sol";
-import {PriceFeedOnDemandMock} from "@gearbox-protocol/core-v3/contracts/test/mocks/oracles/PriceFeedOnDemandMock.sol";
 
 import {Tokens} from "@gearbox-protocol/sdk-gov/contracts/Tokens.sol";
 
@@ -48,7 +40,7 @@ contract UpdatablePriceFeedMock is PriceFeedMock {
     }
 }
 
-contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICreditFacadeV3Events {
+contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
     event LiquidatePartial(
         address indexed creditManager,
         address indexed creditAccount,
@@ -59,9 +51,13 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     );
 
     PartialLiquidationBotV3 bot;
+    address treasury;
 
     address dai;
     address link;
+
+    uint256 daiMask;
+    uint256 linkMask;
 
     uint256 daiAmount = 100_000e18;
     uint256 linkAmount = 10_000e18;
@@ -88,28 +84,27 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     }
 
     function _setUp(BotParams memory params) internal {
+        treasury = makeAddr("TREASURY");
+
         bot = new PartialLiquidationBotV3(
-            address(addressProvider),
+            address(cr),
+            treasury,
             params.minHealthFactor,
             params.maxHealthFactor,
             params.premiumScaleFactor,
             params.feeScaleFactor
         );
 
-        vm.prank(CONFIGURATOR);
-        botList.setBotSpecialPermissions(
-            address(bot), address(creditManager), DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION
-        );
-
         dai = tokenTestSuite.addressOf(Tokens.DAI);
         link = tokenTestSuite.addressOf(Tokens.LINK);
 
-        makeTokenQuoted(link, 500, 1_000_000e18);
+        daiMask = creditManager.getTokenMaskOrRevert(dai);
+        linkMask = creditManager.getTokenMaskOrRevert(link);
 
         vm.startPrank(CONFIGURATOR);
-        (address priceFeed, uint32 stalenessPeriod,,,) = priceOracle.priceFeedParams(link);
-        priceOracle.setPriceFeed(link, priceFeed, stalenessPeriod, false);
-        priceOracle.setReservePriceFeed(link, address(new UpdatablePriceFeedMock(linkPrice, 8)), 1);
+        address priceFeed = address(new UpdatablePriceFeedMock(linkPrice, 8));
+        priceOracle.setReservePriceFeed(link, priceFeed, 1);
+        priceOracle.addUpdatablePriceFeed(priceFeed);
         vm.stopPrank();
 
         deal(link, USER, linkAmount);
@@ -124,7 +119,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     function _openCreditAccount() internal returns (address _creditAccount) {
         uint96 quotaAmount = uint96(6 * daiAmount / 5);
 
-        MultiCall[] memory calls = new MultiCall[](4);
+        MultiCall[] memory calls = new MultiCall[](5);
         calls[0] = MultiCall({
             target: address(creditFacade),
             callData: abi.encodeCall(ICreditFacadeV3Multicall.increaseDebt, (daiAmount))
@@ -141,6 +136,13 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
             target: address(creditFacade),
             callData: abi.encodeCall(ICreditFacadeV3Multicall.updateQuota, (link, int96(quotaAmount), quotaAmount))
         });
+        calls[4] = MultiCall({
+            target: address(creditFacade),
+            callData: abi.encodeCall(
+                ICreditFacadeV3Multicall.setBotPermissions,
+                (address(bot), DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION)
+            )
+        });
 
         vm.prank(USER);
         _creditAccount = creditFacade.openCreditAccount(USER, calls, 0);
@@ -149,9 +151,9 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         vm.warp(block.timestamp + 12);
     }
 
-    function _getPriceUpdates() internal view returns (IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates) {
-        priceUpdates = new IPartialLiquidationBotV3.PriceUpdate[](1);
-        priceUpdates[0] = IPartialLiquidationBotV3.PriceUpdate(link, true, abi.encode(newLinkPrice));
+    function _getPriceUpdates() internal view returns (PriceUpdate[] memory priceUpdates) {
+        priceUpdates = new PriceUpdate[](1);
+        priceUpdates[0] = PriceUpdate(priceOracle.reservePriceFeeds(link), abi.encode(newLinkPrice));
     }
 
     function test_I_PL_01_setup_is_correct() public creditTest {
@@ -167,8 +169,6 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         assertEq(priceOracle.getPrice(dai), uint256(daiPrice), "Incorrect DAI price");
         assertEq(priceOracle.getPrice(link), uint256(linkPrice), "Incorrect LINK price");
-
-        assertEq(bot.treasury(), DUMB_ADDRESS, "Incorrect treasury");
     }
 
     // ----------- //
@@ -178,14 +178,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     function test_I_PL_02A_liquidateExactDebt_sanitizes_inputs() public creditTest {
         _setUp();
 
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
-
-        // reverts on unrecognized price feeds
-        priceUpdates[0].token = weth;
-        vm.expectRevert(PriceFeedDoesNotExistException.selector);
-        vm.prank(LIQUIDATOR);
-        bot.liquidateExactDebt(creditAccount, link, 0, 0, FRIEND, priceUpdates);
-        priceUpdates[0].token = link;
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // reverts on trying to liquidate underlying
         vm.expectRevert(IPartialLiquidationBotV3.UnderlyingNotLiquidatableException.selector);
@@ -201,14 +194,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     function test_I_PL_02B_liquidateExactCollateral_sanitizes_inputs() public creditTest {
         _setUp();
 
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
-
-        // reverts on unrecognized price feeds
-        priceUpdates[0].token = weth;
-        vm.expectRevert(PriceFeedDoesNotExistException.selector);
-        vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, link, 0, 0, FRIEND, priceUpdates);
-        priceUpdates[0].token = link;
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // reverts on trying to liquidate underlying
         vm.expectRevert(IPartialLiquidationBotV3.UnderlyingNotLiquidatableException.selector);
@@ -226,7 +212,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         // make account liquidatable by lowering the collateral price
         PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         uint256 repaidAmount = daiAmount * 3 / 4;
 
@@ -238,14 +224,23 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         uint256 expectedSeizedAmount = repaidAmount * uint256(25 * daiPrice) / uint256(24 * newLinkPrice);
         uint256 expectedFeeAmount = repaidAmount * 3 / 200;
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit DecreaseDebt(creditAccount, repaidAmount - expectedFeeAmount);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.manageDebt,
+                (creditAccount, repaidAmount - expectedFeeAmount, daiMask | linkMask, ManageDebtAction.DECREASE_DEBT)
+            )
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, dai, expectedFeeAmount, DUMB_ADDRESS);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, link, expectedSeizedAmount, FRIEND);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, link, expectedSeizedAmount, FRIEND))
+        );
 
         vm.expectEmit(true, true, true, true, address(bot));
         emit LiquidatePartial(
@@ -268,7 +263,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         // make account liquidatable by lowering the collateral price
         PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         uint256 seizedAmount = linkAmount * 3 / 4;
 
@@ -280,14 +275,28 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         uint256 expectedRepaidAmount = seizedAmount * uint256(24 * newLinkPrice) / uint256(25 * daiPrice);
         uint256 expectedFeeAmount = expectedRepaidAmount * 3 / 200;
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit DecreaseDebt(creditAccount, expectedRepaidAmount - expectedFeeAmount);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.manageDebt,
+                (
+                    creditAccount,
+                    expectedRepaidAmount - expectedFeeAmount,
+                    daiMask | linkMask,
+                    ManageDebtAction.DECREASE_DEBT
+                )
+            )
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, dai, expectedFeeAmount, DUMB_ADDRESS);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, link, seizedAmount, FRIEND);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, link, seizedAmount, FRIEND))
+        );
 
         vm.expectEmit(true, true, true, true, address(bot));
         emit LiquidatePartial(
@@ -315,7 +324,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         // make account liquidatable by lowering the collateral price
         PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // reverts when account is still insolvent after liquidation
         vm.expectRevert(NotEnoughCollateralException.selector);
@@ -338,7 +347,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         // make account liquidatable by lowering the collateral price
         PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // mint small amount of underlying to credit account
         deal(dai, creditAccount, daiAmount / 10);
@@ -355,7 +364,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         // set collateral price such that account's health factor is above 1 but below 1.02
         newLinkPrice = 13.75e8;
         PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        IPartialLiquidationBotV3.PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // reverts on liquidating less than needed
         vm.expectRevert(IPartialLiquidationBotV3.LiquidatedLessThanNeededException.selector);
