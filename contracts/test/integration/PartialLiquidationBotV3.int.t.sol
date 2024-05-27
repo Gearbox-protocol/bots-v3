@@ -3,14 +3,13 @@
 // (c) Gearbox Foundation, 2024.
 pragma solidity ^0.8.17;
 
-import {MultiCall} from "@gearbox-protocol/core-v2/contracts/libraries/MultiCall.sol";
-
-import {ICreditFacadeV3Events} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+import {MultiCall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
 import {
     DECREASE_DEBT_PERMISSION,
     ICreditFacadeV3Multicall,
     WITHDRAW_COLLATERAL_PERMISSION
 } from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
+import {ManageDebtAction} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
 import {
     BorrowAmountOutOfLimitsException,
     CreditAccountNotLiquidatableException,
@@ -20,13 +19,7 @@ import {
 import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 
 import {IntegrationTestHelper} from "@gearbox-protocol/core-v3/contracts/test/helpers/IntegrationTestHelper.sol";
-import {
-    CONFIGURATOR,
-    DUMB_ADDRESS,
-    FRIEND,
-    LIQUIDATOR,
-    USER
-} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
+import {CONFIGURATOR, FRIEND, LIQUIDATOR, USER} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
 import {PriceFeedMock} from "@gearbox-protocol/core-v3/contracts/test/mocks/oracles/PriceFeedMock.sol";
 
 import {Tokens} from "@gearbox-protocol/sdk-gov/contracts/Tokens.sol";
@@ -47,7 +40,7 @@ contract UpdatablePriceFeedMock is PriceFeedMock {
     }
 }
 
-contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICreditFacadeV3Events {
+contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
     event LiquidatePartial(
         address indexed creditManager,
         address indexed creditAccount,
@@ -58,9 +51,13 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     );
 
     PartialLiquidationBotV3 bot;
+    address treasury;
 
     address dai;
     address link;
+
+    uint256 daiMask;
+    uint256 linkMask;
 
     uint256 daiAmount = 100_000e18;
     uint256 linkAmount = 10_000e18;
@@ -87,8 +84,11 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     }
 
     function _setUp(BotParams memory params) internal {
+        treasury = makeAddr("TREASURY");
+
         bot = new PartialLiquidationBotV3(
-            address(addressProvider),
+            address(cr),
+            treasury,
             params.minHealthFactor,
             params.maxHealthFactor,
             params.premiumScaleFactor,
@@ -98,7 +98,8 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         dai = tokenTestSuite.addressOf(Tokens.DAI);
         link = tokenTestSuite.addressOf(Tokens.LINK);
 
-        makeTokenQuoted(link, 500, 1_000_000e18);
+        daiMask = creditManager.getTokenMaskOrRevert(dai);
+        linkMask = creditManager.getTokenMaskOrRevert(link);
 
         vm.startPrank(CONFIGURATOR);
         address priceFeed = address(new UpdatablePriceFeedMock(linkPrice, 8));
@@ -118,7 +119,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
     function _openCreditAccount() internal returns (address _creditAccount) {
         uint96 quotaAmount = uint96(6 * daiAmount / 5);
 
-        MultiCall[] memory calls = new MultiCall[](4);
+        MultiCall[] memory calls = new MultiCall[](5);
         calls[0] = MultiCall({
             target: address(creditFacade),
             callData: abi.encodeCall(ICreditFacadeV3Multicall.increaseDebt, (daiAmount))
@@ -135,13 +136,16 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
             target: address(creditFacade),
             callData: abi.encodeCall(ICreditFacadeV3Multicall.updateQuota, (link, int96(quotaAmount), quotaAmount))
         });
+        calls[4] = MultiCall({
+            target: address(creditFacade),
+            callData: abi.encodeCall(
+                ICreditFacadeV3Multicall.setBotPermissions,
+                (address(bot), DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION)
+            )
+        });
 
-        vm.startPrank(USER);
+        vm.prank(USER);
         _creditAccount = creditFacade.openCreditAccount(USER, calls, 0);
-        creditFacade.setBotPermissions(
-            _creditAccount, address(bot), DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION
-        );
-        vm.stopPrank();
 
         vm.roll(block.number + 1);
         vm.warp(block.timestamp + 12);
@@ -165,8 +169,6 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
 
         assertEq(priceOracle.getPrice(dai), uint256(daiPrice), "Incorrect DAI price");
         assertEq(priceOracle.getPrice(link), uint256(linkPrice), "Incorrect LINK price");
-
-        assertEq(bot.treasury(), DUMB_ADDRESS, "Incorrect treasury");
     }
 
     // ----------- //
@@ -222,14 +224,23 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         uint256 expectedSeizedAmount = repaidAmount * uint256(25 * daiPrice) / uint256(24 * newLinkPrice);
         uint256 expectedFeeAmount = repaidAmount * 3 / 200;
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit DecreaseDebt(creditAccount, repaidAmount - expectedFeeAmount);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.manageDebt,
+                (creditAccount, repaidAmount - expectedFeeAmount, daiMask | linkMask, ManageDebtAction.DECREASE_DEBT)
+            )
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, dai, expectedFeeAmount, DUMB_ADDRESS);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, link, expectedSeizedAmount, FRIEND);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, link, expectedSeizedAmount, FRIEND))
+        );
 
         vm.expectEmit(true, true, true, true, address(bot));
         emit LiquidatePartial(
@@ -264,14 +275,28 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper, ICredi
         uint256 expectedRepaidAmount = seizedAmount * uint256(24 * newLinkPrice) / uint256(25 * daiPrice);
         uint256 expectedFeeAmount = expectedRepaidAmount * 3 / 200;
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit DecreaseDebt(creditAccount, expectedRepaidAmount - expectedFeeAmount);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.manageDebt,
+                (
+                    creditAccount,
+                    expectedRepaidAmount - expectedFeeAmount,
+                    daiMask | linkMask,
+                    ManageDebtAction.DECREASE_DEBT
+                )
+            )
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, dai, expectedFeeAmount, DUMB_ADDRESS);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
+        );
 
-        vm.expectEmit(true, true, true, true, address(creditFacade));
-        emit WithdrawCollateral(creditAccount, link, seizedAmount, FRIEND);
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, link, seizedAmount, FRIEND))
+        );
 
         vm.expectEmit(true, true, true, true, address(bot));
         emit LiquidatePartial(

@@ -6,18 +6,8 @@ pragma solidity ^0.8.17;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
-import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v2/contracts/libraries/Constants.sol";
-import {MultiCall} from "@gearbox-protocol/core-v2/contracts/libraries/MultiCall.sol";
-
-import {
-    AP_TREASURY,
-    IAddressProviderV3,
-    NO_VERSION_CONTROL
-} from "@gearbox-protocol/core-v3/contracts/interfaces/IAddressProviderV3.sol";
-import {IBotV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IBotV3.sol";
 import {ICreditAccountV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditAccountV3.sol";
-import {ICreditFacadeV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+import {ICreditFacadeV3, MultiCall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
 import {
     DECREASE_DEBT_PERMISSION,
     ICreditFacadeV3Multicall,
@@ -33,6 +23,9 @@ import {
     IncorrectParameterException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
 import {IPriceOracleV3, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
+import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
+import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
 import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
 
@@ -72,7 +65,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     /// @inheritdoc IVersion
     uint256 public constant override version = 3_10;
 
-    /// @inheritdoc IBotV3
+    /// @inheritdoc IBot
     uint192 public constant override requiredPermissions = DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION;
 
     /// @inheritdoc IPartialLiquidationBotV3
@@ -94,19 +87,21 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     uint16 public immutable override feeScaleFactor;
 
     /// @notice Constructor
-    /// @param addressProvider Address provider contract address
+    /// @param contractsRegister_ Contracts register address
+    /// @param treasury_ Treasury address
     /// @param minHealthFactor_ Minimum health factor to trigger the liquidation
     /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation
     /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium by
     /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee by
     constructor(
-        address addressProvider,
+        address contractsRegister_,
+        address treasury_,
         uint16 minHealthFactor_,
         uint16 maxHealthFactor_,
         uint16 premiumScaleFactor_,
         uint16 feeScaleFactor_
-    ) ContractsRegisterTrait(addressProvider) {
-        treasury = IAddressProviderV3(addressProvider).getAddressOrRevert(AP_TREASURY, NO_VERSION_CONTROL);
+    ) ContractsRegisterTrait(contractsRegister_) {
+        treasury = treasury_;
         if (maxHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_) {
             revert IncorrectParameterException();
         }

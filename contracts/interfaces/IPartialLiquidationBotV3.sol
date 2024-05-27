@@ -3,14 +3,14 @@
 // (c) Gearbox Foundation, 2024.
 pragma solidity ^0.8.17;
 
-import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
-import {IBotV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IBotV3.sol";
 import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
+import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 import {BotType} from "./BotType.sol";
 
 /// @title Partial liquidation bot V3
 /// @author Gearbox Foundation
-interface IPartialLiquidationBotV3 is IVersion, IBotV3 {
+interface IPartialLiquidationBotV3 is IBot, IVersion {
     // ------ //
     // EVENTS //
     // ------ //
