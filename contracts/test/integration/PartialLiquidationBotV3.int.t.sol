@@ -87,12 +87,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         treasury = makeAddr("TREASURY");
 
         bot = new PartialLiquidationBotV3(
-            address(cr),
-            treasury,
-            params.minHealthFactor,
-            params.maxHealthFactor,
-            params.premiumScaleFactor,
-            params.feeScaleFactor
+            treasury, params.minHealthFactor, params.maxHealthFactor, params.premiumScaleFactor, params.feeScaleFactor
         );
 
         dai = tokenTestSuite.addressOf(Tokens.DAI);

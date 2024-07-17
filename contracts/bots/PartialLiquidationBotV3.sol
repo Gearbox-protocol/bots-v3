@@ -26,8 +26,8 @@ import {IPriceOracleV3, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/i
 import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
 import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
-import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
+import {SanityCheckTrait} from "@gearbox-protocol/core-v3/contracts/traits/SanityCheckTrait.sol";
 
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
 
@@ -48,7 +48,7 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///         - this implementation can't handle fee-on-transfer underlyings.
 ///         The bot can also be used for deleverage to prevent liquidations by triggering earlier, limiting
 ///         operation size and/or charging less in premium and fees.
-contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterTrait, ReentrancyGuardTrait {
+contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTrait, SanityCheckTrait {
     using SafeERC20 for IERC20;
 
     /// @dev Internal liquidation variables
@@ -86,20 +86,19 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     uint16 public immutable override feeScaleFactor;
 
     /// @notice Constructor
-    /// @param contractsRegister_ Contracts register address
     /// @param treasury_ Treasury address
     /// @param minHealthFactor_ Minimum health factor to trigger the liquidation
     /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation
     /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium by
     /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee by
+    /// @dev Reverts if `treasury_` is zero address
     constructor(
-        address contractsRegister_,
         address treasury_,
         uint16 minHealthFactor_,
         uint16 maxHealthFactor_,
         uint16 premiumScaleFactor_,
         uint16 feeScaleFactor_
-    ) ContractsRegisterTrait(contractsRegister_) {
+    ) nonZeroAddress(treasury_) {
         treasury = treasury_;
         if (maxHealthFactor_ < PERCENTAGE_FACTOR || maxHealthFactor_ < minHealthFactor_) {
             revert IncorrectParameterException();
@@ -172,9 +171,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
         vars.feeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
     }
 
-    /// @dev Ensures that `creditAccount` is liquidatable, its credit manager is registered and `token` is not underlying
+    /// @dev Ensures that `creditAccount` is liquidatable and `token` is not underlying
     function _validateLiquidation(LiquidationVars memory vars, address creditAccount, address token) internal view {
-        _ensureRegisteredCreditManager(vars.creditManager);
         if (token == vars.underlying) revert UnderlyingNotLiquidatableException();
         if (!_isLiquidatable(_calcDebtAndCollateral(vars.creditManager, creditAccount), minHealthFactor)) {
             revert CreditAccountNotLiquidatableException();

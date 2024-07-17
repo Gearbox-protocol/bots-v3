@@ -77,7 +77,6 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return seizedAmount Amount of `token` seized
     /// @dev Requires underlying token approval from caller to this contract
-    /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
@@ -100,7 +99,6 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return repaidAmount Amount of underlying repaid
     /// @dev Requires underlying token approval from caller to this contract
-    /// @dev Reverts if `creditAccount`'s credit manager is not registered
     /// @dev Reverts if `token` is underlying
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
