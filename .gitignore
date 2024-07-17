@@ -2,7 +2,7 @@
 node_modules/
 
 # Compiler files
-forge-out/
+out/
 cache/
 
 # Dotenv file

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Gearbox Protocol. Generalized leverage for DeFi protocols
 // (c) Gearbox Foundation, 2024.
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -29,7 +29,6 @@ import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/C
 import {ContractsRegisterTrait} from "@gearbox-protocol/core-v3/contracts/traits/ContractsRegisterTrait.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
 
-import {BotType} from "../interfaces/BotType.sol";
 import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.sol";
 
 /// @title Partial liquidation bot V3
@@ -65,11 +64,11 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ContractsRegisterT
     /// @inheritdoc IVersion
     uint256 public constant override version = 3_10;
 
+    /// @inheritdoc IVersion
+    bytes32 public constant override contractType = "BOT_PARTIAL_LIQUIDATION";
+
     /// @inheritdoc IBot
     uint192 public constant override requiredPermissions = DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION;
-
-    /// @inheritdoc IPartialLiquidationBotV3
-    BotType public constant override botType = BotType.PARTIAL_LIQUIDATION;
 
     /// @inheritdoc IPartialLiquidationBotV3
     address public immutable override treasury;

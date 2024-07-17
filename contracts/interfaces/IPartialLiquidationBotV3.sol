@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Gearbox Protocol. Generalized leverage for DeFi protocols
 // (c) Gearbox Foundation, 2024.
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.23;
 
 import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
 import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
-import {BotType} from "./BotType.sol";
 
 /// @title Partial liquidation bot V3
 /// @author Gearbox Foundation
-interface IPartialLiquidationBotV3 is IBot, IVersion {
+interface IPartialLiquidationBotV3 is IBot {
     // ------ //
     // EVENTS //
     // ------ //
@@ -53,9 +52,6 @@ interface IPartialLiquidationBotV3 is IBot, IVersion {
     // ----------- //
     // LIQUIDATION //
     // ----------- //
-
-    /// @notice Bot type
-    function botType() external view returns (BotType);
 
     /// @notice Treasury to send liquidation fees to
     function treasury() external view returns (address);

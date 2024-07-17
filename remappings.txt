@@ -1,5 +1,4 @@
-ds-test/=node_modules/ds-test/src/
-forge-std/=node_modules/forge-std/src/
-@1inch/=node_modules/@1inch/
-@openzeppelin/=node_modules/@openzeppelin/
-@gearbox-protocol=node_modules/@gearbox-protocol/
+forge-std/=lib/forge-std/src/
+@1inch/=lib/@1inch/
+@openzeppelin/=lib/@openzeppelin/
+@gearbox-protocol=lib/@gearbox-protocol/

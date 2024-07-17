@@ -1,7 +1,7 @@
 [profile.default]
 src = 'contracts'
-libs = ['node_modules']
-out = 'forge-out'
-solc_version = '0.8.17'
+libs = ['lib']
+out = 'out'
+solc_version = '0.8.23'
 evm_version = 'shanghai'
 optimizer_runs = 1000000
