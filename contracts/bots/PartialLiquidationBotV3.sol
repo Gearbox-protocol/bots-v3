@@ -91,6 +91,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     /// @param maxHealthFactor_ Maximum health factor to allow after the liquidation
     /// @param premiumScaleFactor_ Factor to scale credit manager's liquidation premium by
     /// @param feeScaleFactor_ Factor to scale credit manager's liquidation fee by
+    /// @dev Reverts if `maxHealthFactor` is below 100% or below `minHealthFactor_`
     /// @dev Reverts if `treasury_` is zero address
     constructor(
         address treasury_,
@@ -129,27 +130,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         seizedAmount = IPriceOracleV3(vars.priceOracle).convert(repaidAmount, vars.underlying, token)
             * PERCENTAGE_FACTOR / vars.liquidationDiscount;
         if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
-
-        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
-        _checkHealthFactor(vars, creditAccount);
-    }
-
-    /// @inheritdoc IPartialLiquidationBotV3
-    function liquidateExactCollateral(
-        address creditAccount,
-        address token,
-        uint256 seizedAmount,
-        uint256 maxRepaidAmount,
-        address to,
-        PriceUpdate[] calldata priceUpdates
-    ) external override nonReentrant returns (uint256 repaidAmount) {
-        LiquidationVars memory vars = _initVars(creditAccount);
-        IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
-        _validateLiquidation(vars, creditAccount, token);
-
-        repaidAmount = IPriceOracleV3(vars.priceOracle).convert(seizedAmount, token, vars.underlying)
-            * vars.liquidationDiscount / PERCENTAGE_FACTOR;
-        if (repaidAmount > maxRepaidAmount) revert RepaidMoreThanAllowedException();
 
         _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
         _checkHealthFactor(vars, creditAccount);

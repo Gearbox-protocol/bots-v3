@@ -170,7 +170,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
     // BASIC TESTS //
     // ----------- //
 
-    function test_I_PL_02A_liquidateExactDebt_sanitizes_inputs() public creditTest {
+    function test_I_PL_02_liquidateExactDebt_sanitizes_inputs() public creditTest {
         _setUp();
 
         PriceUpdate[] memory priceUpdates = _getPriceUpdates();
@@ -186,23 +186,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         bot.liquidateExactDebt(creditAccount, link, 0, 0, FRIEND, priceUpdates);
     }
 
-    function test_I_PL_02B_liquidateExactCollateral_sanitizes_inputs() public creditTest {
-        _setUp();
-
-        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
-
-        // reverts on trying to liquidate underlying
-        vm.expectRevert(IPartialLiquidationBotV3.UnderlyingNotLiquidatableException.selector);
-        vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, dai, 0, 0, FRIEND, priceUpdates);
-
-        // reverts on trying to liquidate healthy account
-        vm.expectRevert(CreditAccountNotLiquidatableException.selector);
-        vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, link, 0, 0, FRIEND, priceUpdates);
-    }
-
-    function test_I_PL_03A_liquidateExactDebt_works_as_expected() public creditTest {
+    function test_I_PL_03_liquidateExactDebt_works_as_expected() public creditTest {
         _setUp();
 
         // make account liquidatable by lowering the collateral price
@@ -253,63 +237,6 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         assertEq(seizedAmount, expectedSeizedAmount, "Incorrect seized amount");
     }
 
-    function test_I_PL_03B_liquidateExactCollateral_works_as_expected() public creditTest {
-        _setUp();
-
-        // make account liquidatable by lowering the collateral price
-        PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
-        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
-
-        uint256 seizedAmount = linkAmount * 3 / 4;
-
-        // reverts on charging too much
-        vm.expectRevert(IPartialLiquidationBotV3.RepaidMoreThanAllowedException.selector);
-        vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, link, seizedAmount, daiAmount / 2, FRIEND, priceUpdates);
-
-        uint256 expectedRepaidAmount = seizedAmount * uint256(24 * newLinkPrice) / uint256(25 * daiPrice);
-        uint256 expectedFeeAmount = expectedRepaidAmount * 3 / 200;
-
-        vm.expectCall(
-            address(creditManager),
-            abi.encodeCall(
-                creditManager.manageDebt,
-                (
-                    creditAccount,
-                    expectedRepaidAmount - expectedFeeAmount,
-                    daiMask | linkMask,
-                    ManageDebtAction.DECREASE_DEBT
-                )
-            )
-        );
-
-        vm.expectCall(
-            address(creditManager),
-            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
-        );
-
-        vm.expectCall(
-            address(creditManager),
-            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, link, seizedAmount, FRIEND))
-        );
-
-        vm.expectEmit(true, true, true, true, address(bot));
-        emit LiquidatePartial(
-            address(creditManager),
-            creditAccount,
-            link,
-            expectedRepaidAmount - expectedFeeAmount,
-            seizedAmount,
-            expectedFeeAmount
-        );
-
-        vm.prank(LIQUIDATOR);
-        uint256 repaidAmount =
-            bot.liquidateExactCollateral(creditAccount, link, seizedAmount, type(uint256).max, FRIEND, priceUpdates);
-
-        assertEq(repaidAmount, expectedRepaidAmount, "Incorrect repaid amount");
-    }
-
     // ------------------ //
     // ADVANCED SCENARIOS //
     // ------------------ //
@@ -324,7 +251,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         // reverts when account is still insolvent after liquidation
         vm.expectRevert(NotEnoughCollateralException.selector);
         vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, link, linkAmount / 10, type(uint256).max, FRIEND, priceUpdates);
+        bot.liquidateExactDebt(creditAccount, link, daiAmount / 10, 0, FRIEND, priceUpdates);
 
         // reverts when account's debt is below minimum after liquidation
         vm.expectRevert(BorrowAmountOutOfLimitsException.selector);
@@ -334,7 +261,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         // reverts when repaid more debt than account had
         vm.expectRevert(DebtToZeroWithActiveQuotasException.selector);
         vm.prank(LIQUIDATOR);
-        bot.liquidateExactCollateral(creditAccount, link, linkAmount, type(uint256).max, FRIEND, priceUpdates);
+        bot.liquidateExactDebt(creditAccount, link, daiAmount * 11 / 10, 0, FRIEND, priceUpdates);
     }
 
     function test_I_PL_05_partialLiquidation_does_not_steal_underlying_from_account() public creditTest {
