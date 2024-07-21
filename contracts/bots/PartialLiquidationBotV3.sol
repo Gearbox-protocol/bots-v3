@@ -111,12 +111,17 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         feeScaleFactor = feeScaleFactor_;
     }
 
+    /// @notice Returns serialized bot's parameters
+    function serialize() external view returns (bytes memory) {
+        return abi.encode(treasury, minHealthFactor, maxHealthFactor, premiumScaleFactor, feeScaleFactor);
+    }
+
     // ----------- //
     // LIQUIDATION //
     // ----------- //
 
     /// @inheritdoc IPartialLiquidationBotV3
-    function liquidateExactDebt(
+    function partiallyLiquidate(
         address creditAccount,
         address token,
         uint256 repaidAmount,
@@ -213,7 +218,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
         receivedAmount = IERC20(vars.receivedToken).safeBalanceOf(to) - balanceBefore;
 
-        emit LiquidatePartial(vars.creditManager, creditAccount, vars.receivedToken, repaidAmount, receivedAmount, fee);
+        emit PartiallyLiquidate(
+            vars.creditManager, creditAccount, vars.receivedToken, repaidAmount, receivedAmount, fee
+        );
     }
 
     /// @dev Ensures that `creditAccount`'s health factor is within allowed range after partial liquidation

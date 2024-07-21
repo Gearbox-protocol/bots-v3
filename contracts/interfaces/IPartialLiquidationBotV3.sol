@@ -21,7 +21,7 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @param repaidDebt Amount of `creditAccount`'s debt repaid
     /// @param seizedCollateral Amount of `token` seized from `creditAccount`
     /// @param fee Amount of underlying sent to the treasury as liqudiation fee
-    event LiquidatePartial(
+    event PartiallyLiquidate(
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
@@ -80,7 +80,7 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
     /// @dev If `token` is a phantom token, it's withdrawn first, and its `depositedToken` is then sent to the liquidator.
     ///      Both `seizedAmount` and `minSeizedAmount` refer to `depositedToken` in this case.
-    function liquidateExactDebt(
+    function partiallyLiquidate(
         address creditAccount,
         address token,
         uint256 repaidAmount,
