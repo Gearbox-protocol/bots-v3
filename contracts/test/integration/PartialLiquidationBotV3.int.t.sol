@@ -20,7 +20,13 @@ import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPrice
 
 import {IntegrationTestHelper} from "@gearbox-protocol/core-v3/contracts/test/helpers/IntegrationTestHelper.sol";
 import {CONFIGURATOR, FRIEND, LIQUIDATOR, USER} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
+import {GeneralMock} from "@gearbox-protocol/core-v3/contracts/test/mocks/GeneralMock.sol";
 import {PriceFeedMock} from "@gearbox-protocol/core-v3/contracts/test/mocks/oracles/PriceFeedMock.sol";
+import {ERC20Mock} from "@gearbox-protocol/core-v3/contracts/test/mocks/token/ERC20Mock.sol";
+import {
+    PhantomTokenMock,
+    PhantomTokenWithdrawerMock
+} from "@gearbox-protocol/core-v3/contracts/test/mocks/token/PhantomTokenMock.sol";
 
 import {Tokens} from "@gearbox-protocol/sdk-gov/contracts/Tokens.sol";
 
@@ -306,5 +312,73 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         vm.prank(LIQUIDATOR);
         uint256 seizedAmount = bot.liquidateExactDebt(creditAccount, link, repaidAmount, 0, FRIEND, priceUpdates);
         assertApproxEqAbs(seizedAmount, expectedSeizedAmount, 1, "Incorrect seized amount");
+    }
+
+    function test_I_PL_07_partialLiquidation_works_as_expected_with_phantom_collateral() public creditTest {
+        _setUp();
+
+        // make account liquidatable by lowering the collateral price
+        PriceFeedMock(priceOracle.priceFeeds(link)).setPrice(newLinkPrice);
+        PriceUpdate[] memory priceUpdates = _getPriceUpdates();
+
+        // turn LINK into a phantom token around CRV by replacing its implementation
+        ERC20Mock crv = ERC20Mock(tokenTestSuite.addressOf(Tokens.CRV));
+        vm.etch(
+            link, address(new PhantomTokenMock(address(new GeneralMock()), address(crv), "Phantom Curve", "pCRV")).code
+        );
+
+        // set LINK/CRV exchange rate to 0.5 (thus `expectedSeizedAmount` is divided by 2)
+        PhantomTokenMock(link).setExchangeRate(0.5 ether);
+
+        // whitelist a LINK withdrawer adapter
+        PhantomTokenWithdrawerMock withdrawer = new PhantomTokenWithdrawerMock(address(creditManager), link);
+        crv.set_minter(address(withdrawer));
+        vm.prank(CONFIGURATOR);
+        creditConfigurator.allowAdapter(address(withdrawer));
+
+        uint256 repaidAmount = daiAmount * 3 / 4;
+
+        // reverts on paying too little
+        vm.expectRevert(IPartialLiquidationBotV3.SeizedLessThanRequiredException.selector);
+        vm.prank(LIQUIDATOR);
+        bot.liquidateExactDebt(creditAccount, link, repaidAmount, linkAmount / 2, FRIEND, priceUpdates);
+
+        uint256 expectedSeizedAmount = repaidAmount * uint256(25 * daiPrice) / uint256(24 * newLinkPrice) / 2;
+        uint256 expectedFeeAmount = repaidAmount * 3 / 200;
+
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.manageDebt,
+                (creditAccount, repaidAmount - expectedFeeAmount, daiMask | linkMask, ManageDebtAction.DECREASE_DEBT)
+            )
+        );
+
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(creditManager.withdrawCollateral, (creditAccount, dai, expectedFeeAmount, treasury))
+        );
+
+        vm.expectCall(
+            address(creditManager),
+            abi.encodeCall(
+                creditManager.withdrawCollateral, (creditAccount, address(crv), expectedSeizedAmount, FRIEND)
+            )
+        );
+
+        vm.expectEmit(true, true, true, true, address(bot));
+        emit LiquidatePartial(
+            address(creditManager),
+            creditAccount,
+            address(crv),
+            repaidAmount - expectedFeeAmount,
+            expectedSeizedAmount,
+            expectedFeeAmount
+        );
+
+        vm.prank(LIQUIDATOR);
+        uint256 seizedAmount = bot.liquidateExactDebt(creditAccount, link, repaidAmount, 0, FRIEND, priceUpdates);
+
+        assertEq(seizedAmount, expectedSeizedAmount, "Incorrect seized amount");
     }
 }

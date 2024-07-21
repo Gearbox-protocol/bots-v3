@@ -74,10 +74,12 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return seizedAmount Amount of `token` seized
     /// @dev Requires underlying token approval from caller to this contract
-    /// @dev Reverts if `token` is underlying
+    /// @dev Reverts if `token` is underlying or if `token` is a phantom token and its `depositedToken` is underlying
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
     /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
+    /// @dev If `token` is a phantom token, it's withdrawn first, and its `depositedToken` is then sent to the liquidator.
+    ///      Both `seizedAmount` and `minSeizedAmount` refer to `depositedToken` in this case.
     function liquidateExactDebt(
         address creditAccount,
         address token,

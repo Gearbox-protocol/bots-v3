@@ -24,6 +24,7 @@ import {
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
 import {IPriceOracleV3, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
+import {IPhantomToken} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPhantomToken.sol";
 import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
@@ -56,6 +57,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         address creditFacade;
         address priceOracle;
         address underlying;
+        address receivedToken;
         uint256 feeLiquidation;
         uint256 liquidationDiscount;
     }
@@ -122,9 +124,9 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         address to,
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant returns (uint256 seizedAmount) {
-        LiquidationVars memory vars = _initVars(creditAccount);
+        LiquidationVars memory vars = _initVars(creditAccount, token);
         if (priceUpdates.length != 0) IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
-        _validateLiquidation(vars, creditAccount, token);
+        _validateLiquidation(vars, creditAccount);
 
         uint256 balanceBefore = IERC20(vars.underlying).safeBalanceOf(creditAccount);
         IERC20(vars.underlying).safeTransferFrom(msg.sender, creditAccount, repaidAmount);
@@ -132,9 +134,10 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
 
         uint256 fee;
         (repaidAmount, fee, seizedAmount) = _calcPartialLiquidationPayments(vars, repaidAmount, token);
+
+        seizedAmount = _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, fee, to);
         if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
 
-        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, fee, to);
         _checkHealthFactor(vars, creditAccount);
     }
 
@@ -143,7 +146,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     // --------- //
 
     /// @dev Loads state variables used in `creditAccount` liquidation
-    function _initVars(address creditAccount) internal view returns (LiquidationVars memory vars) {
+    function _initVars(address creditAccount, address token) internal view returns (LiquidationVars memory vars) {
         vars.creditManager = ICreditAccountV3(creditAccount).creditManager();
         vars.creditFacade = ICreditManagerV3(vars.creditManager).creditFacade();
         vars.priceOracle = ICreditManagerV3(vars.creditManager).priceOracle();
@@ -152,11 +155,16 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         vars.liquidationDiscount =
             PERCENTAGE_FACTOR - (PERCENTAGE_FACTOR - liquidationDiscount) * premiumScaleFactor / PERCENTAGE_FACTOR;
         vars.feeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
+        try IPhantomToken(token).getPhantomTokenInfo() returns (address, address depositedToken) {
+            vars.receivedToken = depositedToken;
+        } catch {
+            vars.receivedToken = token;
+        }
     }
 
     /// @dev Ensures that `creditAccount` is liquidatable and `token` is not underlying
-    function _validateLiquidation(LiquidationVars memory vars, address creditAccount, address token) internal view {
-        if (token == vars.underlying) revert UnderlyingNotLiquidatableException();
+    function _validateLiquidation(LiquidationVars memory vars, address creditAccount) internal view {
+        if (vars.receivedToken == vars.underlying) revert UnderlyingNotLiquidatableException();
         if (!_isLiquidatable(_calcDebtAndCollateral(vars.creditManager, creditAccount), minHealthFactor)) {
             revert CreditAccountNotLiquidatableException();
         }
@@ -187,7 +195,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         uint256 seizedAmount,
         uint256 fee,
         address to
-    ) internal {
+    ) internal returns (uint256 receivedAmount) {
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
             target: vars.creditFacade,
@@ -201,9 +209,11 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
             target: vars.creditFacade,
             callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (token, seizedAmount, to))
         });
+        uint256 balanceBefore = IERC20(vars.receivedToken).safeBalanceOf(to);
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
+        receivedAmount = IERC20(vars.receivedToken).safeBalanceOf(to) - balanceBefore;
 
-        emit LiquidatePartial(vars.creditManager, creditAccount, token, repaidAmount, seizedAmount, fee);
+        emit LiquidatePartial(vars.creditManager, creditAccount, vars.receivedToken, repaidAmount, receivedAmount, fee);
     }
 
     /// @dev Ensures that `creditAccount`'s health factor is within allowed range after partial liquidation
