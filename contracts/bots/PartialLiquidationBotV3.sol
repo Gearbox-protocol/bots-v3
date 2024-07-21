@@ -4,7 +4,7 @@
 pragma solidity ^0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeERC20} from "@1inch/solidity-utils/contracts/libraries/SafeERC20.sol";
 
 import {ICreditAccountV3} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditAccountV3.sol";
 import {ICreditFacadeV3, MultiCall} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
@@ -44,8 +44,7 @@ import {IPartialLiquidationBotV3} from "../interfaces/IPartialLiquidationBotV3.s
 ///         - health factor range check is made using normal prices, which, under certain circumstances, may be
 ///           mutually exclusive with the former;
 ///         - liquidator premium and DAO fee are the same as for the full liquidation in a given credit manager
-///           (although fees are sent to the treasury instead of being deposited into pools);
-///         - this implementation can't handle fee-on-transfer underlyings.
+///           (although fees are sent to the treasury instead of being deposited into pools).
 ///         The bot can also be used for deleverage to prevent liquidations by triggering earlier, limiting
 ///         operation size and/or charging less in premium and fees.
 contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTrait, SanityCheckTrait {
@@ -124,14 +123,18 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant returns (uint256 seizedAmount) {
         LiquidationVars memory vars = _initVars(creditAccount);
-        IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
+        if (priceUpdates.length != 0) IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
         _validateLiquidation(vars, creditAccount, token);
 
-        seizedAmount = IPriceOracleV3(vars.priceOracle).convert(repaidAmount, vars.underlying, token)
-            * PERCENTAGE_FACTOR / vars.liquidationDiscount;
+        uint256 balanceBefore = IERC20(vars.underlying).safeBalanceOf(creditAccount);
+        IERC20(vars.underlying).safeTransferFrom(msg.sender, creditAccount, repaidAmount);
+        repaidAmount = IERC20(vars.underlying).safeBalanceOf(creditAccount) - balanceBefore;
+
+        uint256 fee;
+        (repaidAmount, fee, seizedAmount) = _calcPartialLiquidationPayments(vars, repaidAmount, token);
         if (seizedAmount < minSeizedAmount) revert SeizedLessThanRequiredException();
 
-        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, to);
+        _executeLiquidation(vars, creditAccount, token, repaidAmount, seizedAmount, fee, to);
         _checkHealthFactor(vars, creditAccount);
     }
 
@@ -159,22 +162,32 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         }
     }
 
-    /// @dev Executes partial liquidation:
-    ///      - transfers `repaidAmount` of underlying from the caller to `creditAccount`
-    ///      - performs a multicall on `creditAccount` that repays debt, withdraws fee to the treasury,
-    ///        and withdraws `seizedAmount` of `token` to `to`
+    /// @dev Calculates and returns partial liquidation payment amounts:
+    ///      - amount of underlying that should go towards repaying debt
+    ///      - amount of underlying that should go towards liquidation fees
+    ///      - amount of collateral that should be withdrawn to the liquidator
+    function _calcPartialLiquidationPayments(LiquidationVars memory vars, uint256 amount, address token)
+        internal
+        view
+        returns (uint256 repaidAmount, uint256 fee, uint256 seizedAmount)
+    {
+        seizedAmount = IPriceOracleV3(vars.priceOracle).convert(amount, vars.underlying, token) * PERCENTAGE_FACTOR
+            / vars.liquidationDiscount;
+        fee = amount * vars.feeLiquidation / PERCENTAGE_FACTOR;
+        repaidAmount = amount - fee;
+    }
+
+    /// @dev Executes partial liquidation by performing a multicall on `creditAccount` that repays debt,
+    ///      withdraws fee to the treasury and withdraws `token` to `to`
     function _executeLiquidation(
         LiquidationVars memory vars,
         address creditAccount,
         address token,
         uint256 repaidAmount,
         uint256 seizedAmount,
+        uint256 fee,
         address to
     ) internal {
-        IERC20(vars.underlying).safeTransferFrom(msg.sender, creditAccount, repaidAmount);
-        uint256 fee = repaidAmount * vars.feeLiquidation / PERCENTAGE_FACTOR;
-        repaidAmount -= fee;
-
         MultiCall[] memory calls = new MultiCall[](3);
         calls[0] = MultiCall({
             target: vars.creditFacade,
