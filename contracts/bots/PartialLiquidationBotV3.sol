@@ -62,11 +62,11 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         uint256 liquidationDiscount;
     }
 
-    /// @inheritdoc IVersion
-    uint256 public constant override version = 3_10;
+    /// @notice Version of the bot
+    uint256 public constant version = 3_10;
 
-    /// @inheritdoc IVersion
-    bytes32 public constant override contractType = "BOT_PARTIAL_LIQUIDATION";
+    /// @notice Type of the bot
+    bytes32 public constant contractType = "BOT_PARTIAL_LIQUIDATION";
 
     /// @inheritdoc IBot
     uint192 public constant override requiredPermissions = DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION;
