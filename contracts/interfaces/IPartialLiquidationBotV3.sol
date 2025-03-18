@@ -3,8 +3,8 @@
 // (c) Gearbox Foundation, 2024.
 pragma solidity ^0.8.23;
 
-import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
+import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPriceFeedStore.sol";
 import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 
 /// @title Partial liquidation bot V3
@@ -18,6 +18,7 @@ interface IPartialLiquidationBotV3 is IBot {
     /// @param creditManager Credit manager an account was liquidated in
     /// @param creditAccount Liquidated credit account
     /// @param token Collateral token seized from `creditAccount`
+    /// @param liquidator Liquidator that called the bot
     /// @param repaidDebt Amount of `creditAccount`'s debt repaid
     /// @param seizedCollateral Amount of `token` seized from `creditAccount`
     /// @param fee Amount of underlying sent to the treasury as liqudiation fee
@@ -25,6 +26,7 @@ interface IPartialLiquidationBotV3 is IBot {
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
+        address liquidator,
         uint256 repaidDebt,
         uint256 seizedCollateral,
         uint256 fee

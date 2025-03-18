@@ -22,11 +22,13 @@ import {
     CreditAccountNotLiquidatableException,
     IncorrectParameterException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
-import {IPriceOracleV3, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {IPriceOracleV3} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
 import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
 import {IPhantomToken} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPhantomToken.sol";
+import {IPriceFeedStore, PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPriceFeedStore.sol";
 import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+import {OptionalCall} from "@gearbox-protocol/core-v3/contracts/libraries/OptionalCall.sol";
 import {ReentrancyGuardTrait} from "@gearbox-protocol/core-v3/contracts/traits/ReentrancyGuardTrait.sol";
 import {SanityCheckTrait} from "@gearbox-protocol/core-v3/contracts/traits/SanityCheckTrait.sol";
 
@@ -55,7 +57,6 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     struct LiquidationVars {
         address creditManager;
         address creditFacade;
-        address priceOracle;
         address underlying;
         address receivedToken;
         uint256 feeLiquidation;
@@ -66,7 +67,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     uint256 public constant override version = 3_10;
 
     /// @inheritdoc IVersion
-    bytes32 public constant override contractType = "BOT_PARTIAL_LIQUIDATION";
+    bytes32 public constant override contractType = "BOT::PARTIAL_LIQUIDATION";
 
     /// @inheritdoc IBot
     uint192 public constant override requiredPermissions = DECREASE_DEBT_PERMISSION | WITHDRAW_COLLATERAL_PERMISSION;
@@ -112,7 +113,7 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     }
 
     /// @notice Returns serialized bot's parameters
-    function serialize() external view returns (bytes memory) {
+    function serialize() external view override returns (bytes memory) {
         return abi.encode(treasury, minHealthFactor, maxHealthFactor, premiumScaleFactor, feeScaleFactor);
     }
 
@@ -130,7 +131,10 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         PriceUpdate[] calldata priceUpdates
     ) external override nonReentrant returns (uint256 seizedAmount) {
         LiquidationVars memory vars = _initVars(creditAccount, token);
-        if (priceUpdates.length != 0) IPriceOracleV3(vars.priceOracle).updatePrices(priceUpdates);
+        if (priceUpdates.length != 0) {
+            address priceFeedStore = ICreditFacadeV3(vars.creditFacade).priceFeedStore();
+            IPriceFeedStore(priceFeedStore).updatePrices(priceUpdates);
+        }
         _validateLiquidation(vars, creditAccount);
 
         uint256 balanceBefore = IERC20(vars.underlying).safeBalanceOf(creditAccount);
@@ -154,15 +158,19 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
     function _initVars(address creditAccount, address token) internal view returns (LiquidationVars memory vars) {
         vars.creditManager = ICreditAccountV3(creditAccount).creditManager();
         vars.creditFacade = ICreditManagerV3(vars.creditManager).creditFacade();
-        vars.priceOracle = ICreditManagerV3(vars.creditManager).priceOracle();
         vars.underlying = ICreditManagerV3(vars.creditManager).underlying();
         (, uint256 feeLiquidation, uint256 liquidationDiscount,,) = ICreditManagerV3(vars.creditManager).fees();
         vars.liquidationDiscount =
             PERCENTAGE_FACTOR - (PERCENTAGE_FACTOR - liquidationDiscount) * premiumScaleFactor / PERCENTAGE_FACTOR;
         vars.feeLiquidation = feeLiquidation * feeScaleFactor / PERCENTAGE_FACTOR;
-        try IPhantomToken(token).getPhantomTokenInfo() returns (address, address depositedToken) {
-            vars.receivedToken = depositedToken;
-        } catch {
+        (bool success, bytes memory returnData) = OptionalCall.staticCallOptionalSafe({
+            target: token,
+            data: abi.encodeCall(IPhantomToken.getPhantomTokenInfo, ()),
+            gasAllowance: 10_000
+        });
+        if (success) {
+            (, vars.receivedToken) = abi.decode(returnData, (address, address));
+        } else {
             vars.receivedToken = token;
         }
     }
@@ -184,7 +192,8 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         view
         returns (uint256 repaidAmount, uint256 fee, uint256 seizedAmount)
     {
-        seizedAmount = IPriceOracleV3(vars.priceOracle).convert(amount, vars.underlying, token) * PERCENTAGE_FACTOR
+        address priceOracle = ICreditManagerV3(vars.creditManager).priceOracle();
+        seizedAmount = IPriceOracleV3(priceOracle).convert(amount, vars.underlying, token) * PERCENTAGE_FACTOR
             / vars.liquidationDiscount;
         fee = amount * vars.feeLiquidation / PERCENTAGE_FACTOR;
         repaidAmount = amount - fee;
@@ -201,25 +210,27 @@ contract PartialLiquidationBotV3 is IPartialLiquidationBotV3, ReentrancyGuardTra
         uint256 fee,
         address to
     ) internal returns (uint256 receivedAmount) {
-        MultiCall[] memory calls = new MultiCall[](3);
+        MultiCall[] memory calls = new MultiCall[](fee != 0 ? 3 : 2);
         calls[0] = MultiCall({
             target: vars.creditFacade,
             callData: abi.encodeCall(ICreditFacadeV3Multicall.decreaseDebt, (repaidAmount))
         });
         calls[1] = MultiCall({
             target: vars.creditFacade,
-            callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (vars.underlying, fee, treasury))
-        });
-        calls[2] = MultiCall({
-            target: vars.creditFacade,
             callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (token, seizedAmount, to))
         });
+        if (fee != 0) {
+            calls[2] = MultiCall({
+                target: vars.creditFacade,
+                callData: abi.encodeCall(ICreditFacadeV3Multicall.withdrawCollateral, (vars.underlying, fee, treasury))
+            });
+        }
         uint256 balanceBefore = IERC20(vars.receivedToken).safeBalanceOf(to);
         ICreditFacadeV3(vars.creditFacade).botMulticall(creditAccount, calls);
         receivedAmount = IERC20(vars.receivedToken).safeBalanceOf(to) - balanceBefore;
 
         emit PartiallyLiquidate(
-            vars.creditManager, creditAccount, vars.receivedToken, repaidAmount, receivedAmount, fee
+            vars.creditManager, creditAccount, vars.receivedToken, msg.sender, repaidAmount, receivedAmount, fee
         );
     }
 

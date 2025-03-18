@@ -16,7 +16,7 @@ import {
     DebtToZeroWithActiveQuotasException,
     NotEnoughCollateralException
 } from "@gearbox-protocol/core-v3/contracts/interfaces/IExceptions.sol";
-import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/IPriceOracleV3.sol";
+import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPriceFeedStore.sol";
 
 import {IntegrationTestHelper} from "@gearbox-protocol/core-v3/contracts/test/helpers/IntegrationTestHelper.sol";
 import {CONFIGURATOR, FRIEND, LIQUIDATOR, USER} from "@gearbox-protocol/core-v3/contracts/test/lib/constants.sol";
@@ -28,7 +28,7 @@ import {
     PhantomTokenWithdrawerMock
 } from "@gearbox-protocol/core-v3/contracts/test/mocks/token/PhantomTokenMock.sol";
 
-import {Tokens} from "@gearbox-protocol/sdk-gov/contracts/Tokens.sol";
+import "@gearbox-protocol/sdk-gov/contracts/Tokens.sol";
 
 import {PartialLiquidationBotV3} from "../../bots/PartialLiquidationBotV3.sol";
 import {IPartialLiquidationBotV3} from "../../interfaces/IPartialLiquidationBotV3.sol";
@@ -47,15 +47,6 @@ contract UpdatablePriceFeedMock is PriceFeedMock {
 }
 
 contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
-    event PartiallyLiquidate(
-        address indexed creditManager,
-        address indexed creditAccount,
-        address indexed token,
-        uint256 repaidDebt,
-        uint256 seizedCollateral,
-        uint256 fee
-    );
-
     PartialLiquidationBotV3 bot;
     address treasury;
 
@@ -96,8 +87,8 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
             treasury, params.minHealthFactor, params.maxHealthFactor, params.premiumScaleFactor, params.feeScaleFactor
         );
 
-        dai = tokenTestSuite.addressOf(Tokens.DAI);
-        link = tokenTestSuite.addressOf(Tokens.LINK);
+        dai = tokenTestSuite.addressOf(TOKEN_DAI);
+        link = tokenTestSuite.addressOf(TOKEN_LINK);
 
         daiMask = creditManager.getTokenMaskOrRevert(dai);
         linkMask = creditManager.getTokenMaskOrRevert(link);
@@ -105,7 +96,6 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         vm.startPrank(CONFIGURATOR);
         address priceFeed = address(new UpdatablePriceFeedMock(linkPrice, 8));
         priceOracle.setReservePriceFeed(link, priceFeed, 1);
-        priceOracle.addUpdatablePriceFeed(priceFeed);
         vm.stopPrank();
 
         deal(link, USER, linkAmount);
@@ -228,10 +218,11 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         );
 
         vm.expectEmit(true, true, true, true, address(bot));
-        emit PartiallyLiquidate(
+        emit IPartialLiquidationBotV3.PartiallyLiquidate(
             address(creditManager),
             creditAccount,
             link,
+            LIQUIDATOR,
             repaidAmount - expectedFeeAmount,
             expectedSeizedAmount,
             expectedFeeAmount
@@ -297,7 +288,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         // reverts on liquidating less than needed
         vm.expectRevert(IPartialLiquidationBotV3.LiquidatedLessThanNeededException.selector);
         vm.prank(LIQUIDATOR);
-        bot.partiallyLiquidate(creditAccount, link, 0, 0, FRIEND, priceUpdates);
+        bot.partiallyLiquidate(creditAccount, link, daiAmount / 32, 0, FRIEND, priceUpdates);
 
         // reverts on liquidating more than needed (note that this amount works in other tests)
         vm.expectRevert(IPartialLiquidationBotV3.LiquidatedMoreThanNeededException.selector);
@@ -322,7 +313,7 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         PriceUpdate[] memory priceUpdates = _getPriceUpdates();
 
         // turn LINK into a phantom token around CRV by replacing its implementation
-        ERC20Mock crv = ERC20Mock(tokenTestSuite.addressOf(Tokens.CRV));
+        ERC20Mock crv = ERC20Mock(tokenTestSuite.addressOf(TOKEN_CRV));
         vm.etch(
             link, address(new PhantomTokenMock(address(new GeneralMock()), address(crv), "Phantom Curve", "pCRV")).code
         );
@@ -367,10 +358,11 @@ contract PartialLiquidationBotV3IntegrationTest is IntegrationTestHelper {
         );
 
         vm.expectEmit(true, true, true, true, address(bot));
-        emit PartiallyLiquidate(
+        emit IPartialLiquidationBotV3.PartiallyLiquidate(
             address(creditManager),
             creditAccount,
             address(crv),
+            LIQUIDATOR,
             repaidAmount - expectedFeeAmount,
             expectedSeizedAmount,
             expectedFeeAmount
