@@ -14,3 +14,6 @@
 	path = lib/@gearbox-protocol/core-v3
 	url = https://github.com/Gearbox-protocol/core-v3
 	branch = next
+[submodule "lib/@gearbox-protocol/integrations-v3"]
+	path = lib/@gearbox-protocol/integrations-v3
+	url = https://github.com/Gearbox-protocol/integrations-v3
