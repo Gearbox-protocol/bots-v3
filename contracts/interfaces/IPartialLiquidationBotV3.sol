@@ -1,27 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Gearbox Protocol. Generalized leverage for DeFi protocols
 // (c) Gearbox Foundation, 2024.
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.23;
 
-import {IVersion} from "@gearbox-protocol/core-v2/contracts/interfaces/IVersion.sol";
+import {IBot} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IBot.sol";
+import {PriceUpdate} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IPriceFeedStore.sol";
+import {IVersion} from "@gearbox-protocol/core-v3/contracts/interfaces/base/IVersion.sol";
 
 /// @title Partial liquidation bot V3
 /// @author Gearbox Foundation
-interface IPartialLiquidationBotV3 is IVersion {
-    // ----- //
-    // TYPES //
-    // ----- //
-
-    /// @notice Update params for an on-demand price feed in the price oracle
-    /// @param token Token to update the price for
-    /// @param reserve Whether main or reserve feed should be updated
-    /// @param data Update data
-    struct PriceUpdate {
-        address token;
-        bool reserve;
-        bytes data;
-    }
-
+interface IPartialLiquidationBotV3 is IBot {
     // ------ //
     // EVENTS //
     // ------ //
@@ -30,13 +18,15 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param creditManager Credit manager an account was liquidated in
     /// @param creditAccount Liquidated credit account
     /// @param token Collateral token seized from `creditAccount`
+    /// @param liquidator Liquidator that called the bot
     /// @param repaidDebt Amount of `creditAccount`'s debt repaid
     /// @param seizedCollateral Amount of `token` seized from `creditAccount`
     /// @param fee Amount of underlying sent to the treasury as liqudiation fee
-    event LiquidatePartial(
+    event PartiallyLiquidate(
         address indexed creditManager,
         address indexed creditAccount,
         address indexed token,
+        address liquidator,
         uint256 repaidDebt,
         uint256 seizedCollateral,
         uint256 fee
@@ -51,9 +41,6 @@ interface IPartialLiquidationBotV3 is IVersion {
 
     /// @notice Thrown when health factor after liquidation is greater than maximum allowed
     error LiquidatedMoreThanNeededException();
-
-    /// @notice Thrown when amount of underlying repaid is greater than allowed
-    error RepaidMoreThanAllowedException();
 
     /// @notice Thrown when amount of collateral seized is less than required
     error SeizedLessThanRequiredException();
@@ -86,16 +73,16 @@ interface IPartialLiquidationBotV3 is IVersion {
     /// @param repaidAmount Amount of underlying to repay
     /// @param minSeizedAmount Minimum amount of `token` to seize from `creditAccount`
     /// @param to Address to send seized `token` to
-    /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
+    /// @param priceUpdates On-demand price feed updates to apply before calculations
     /// @return seizedAmount Amount of `token` seized
     /// @dev Requires underlying token approval from caller to this contract
-    /// @dev Reverts if `creditAccount`'s credit manager is not registered
-    /// @dev Reverts if `token` is underlying
-    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
+    /// @dev Reverts if `token` is underlying or if `token` is a phantom token and its `depositedToken` is underlying
     /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
     /// @dev Reverts if amount of `token` to be seized is less than `minSeizedAmount`
     /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
-    function liquidateExactDebt(
+    /// @dev If `token` is a phantom token, it's withdrawn first, and its `depositedToken` is then sent to the liquidator.
+    ///      Both `seizedAmount` and `minSeizedAmount` refer to `depositedToken` in this case.
+    function partiallyLiquidate(
         address creditAccount,
         address token,
         uint256 repaidAmount,
@@ -103,28 +90,4 @@ interface IPartialLiquidationBotV3 is IVersion {
         address to,
         PriceUpdate[] calldata priceUpdates
     ) external returns (uint256 seizedAmount);
-
-    /// @notice Liquidates credit account by repaying its debt in exchange for the given amount of discounted collateral
-    /// @param creditAccount Credit account to liquidate
-    /// @param token Collateral token to seize
-    /// @param seizedAmount Amount of `token` to seize from `creditAccount`
-    /// @param maxRepaidAmount Maxiumum amount of underlying to repay
-    /// @param to Address to send seized `token` to
-    /// @param priceUpdates On-demand price feed updates to apply before calculations, see `PriceUpdate` for details
-    /// @return repaidAmount Amount of underlying repaid
-    /// @dev Requires underlying token approval from caller to this contract
-    /// @dev Reverts if `creditAccount`'s credit manager is not registered
-    /// @dev Reverts if `token` is underlying
-    /// @dev Reverts if `priceUpdates` contains updates of unknown feeds
-    /// @dev Reverts if `creditAccount`'s health factor is not less than `minHealthFactor` before liquidation
-    /// @dev Reverts if amount of underlying to be repaid is greater than `maxRepaidAmount`
-    /// @dev Reverts if `creditAccount`'s health factor is not within allowed range after liquidation
-    function liquidateExactCollateral(
-        address creditAccount,
-        address token,
-        uint256 seizedAmount,
-        uint256 maxRepaidAmount,
-        address to,
-        PriceUpdate[] calldata priceUpdates
-    ) external returns (uint256 repaidAmount);
 }
